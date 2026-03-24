@@ -42,6 +42,9 @@ Run one command to generate a complete, production-ready vault structure with al
 ### 🩺 Health check
 Scan any vault for duplicates, orphaned notes, stale tasks, broken links, missing frontmatter, and unfilled templates.
 
+### ⌨️ Slash commands
+14 built-in commands for every common vault operation — all smart, all context-aware.
+
 ---
 
 ## Quick Start
@@ -81,7 +84,7 @@ git clone https://github.com/eugeniughelbur/obsidian-second-brain ~/.claude/skil
 
 3. Drop a `_CLAUDE.md` into your vault:
 ```
-"Claude, generate a _CLAUDE.md for my vault"
+/obsidian-init
 ```
 
 Claude will scan your vault structure, read your templates, and generate a customized operating manual.
@@ -136,6 +139,31 @@ Update it when your priorities shift or your structure changes:
 
 ---
 
+## Commands
+
+14 slash commands, each designed to be smart — Claude reads context, fuzzy-matches names, searches before writing, and propagates everywhere changes belong. You never need to specify where to save something.
+
+| Command | What it does |
+|---|---|
+| `/obsidian-save` | Reads the whole conversation and saves everything worth keeping — decisions, tasks, people, learnings — to the right places |
+| `/obsidian-daily` | Creates or updates today's daily note, pre-filled with context from the conversation |
+| `/obsidian-log` | Logs a work or dev session — infers the project, creates the log, links from project note and daily |
+| `/obsidian-task [desc]` | Adds a task to the right kanban board with inferred priority, due date, and project link |
+| `/obsidian-person [name]` | Creates or updates a person note from conversation context; logs the interaction in the daily note |
+| `/obsidian-decide [topic]` | Extracts decisions from the conversation and logs them in the right project's Key Decisions section |
+| `/obsidian-capture [idea]` | Quick idea drop with zero friction — saves to Ideas/ and mentions in the daily note |
+| `/obsidian-find [query]` | Smart vault search — returns results with context, not just filenames |
+| `/obsidian-recap [today\|week\|month]` | Synthesizes a time period from daily notes and logs into a narrative summary |
+| `/obsidian-review` | Generates a structured weekly or monthly review note from vault history |
+| `/obsidian-board [name]` | Shows current kanban board state, flags overdue items, updates from conversation |
+| `/obsidian-project [name]` | Creates or updates a project note; adds to board and daily note automatically |
+| `/obsidian-health` | Runs a vault health check grouped by severity; offers to auto-fix safe issues |
+| `/obsidian-init` | Discovers your vault structure and generates a `_CLAUDE.md` operating manual |
+
+**Name matching:** All commands that take a name argument handle typos and partial matches — Claude searches the vault, shows what it found, and confirms before acting.
+
+---
+
 ## Vault Health Check
 
 ```bash
@@ -187,17 +215,17 @@ obsidian-second-brain/
 
 ## Examples
 
-### "Save what we just discussed"
-Claude identifies what's worth saving from the conversation, determines the right note type(s), checks for existing notes, writes them with correct frontmatter, and propagates to boards and daily note — without you specifying where anything goes.
+### `/obsidian-save`
+After a long conversation about a new project: Claude scans the whole chat, identifies the project, the decisions made, the people mentioned, and any tasks committed to. Creates the project note, adds a card to the kanban board, stubs out people notes, logs tasks, and links everything from today's daily note. No instructions needed.
 
-### "Log today's work session"
-Claude creates a dev log with what was worked on, problems solved, and decisions made. Links it from the relevant project note and today's daily note automatically.
+### `/obsidian-log`
+After a dev session: Claude infers the project from context, writes a dev log with what was worked on, problems encountered, and next steps. Links it from the project's Recent Activity section and today's daily note automatically.
 
-### "Update my Side Biz board with the new client deal"
-Claude finds or creates the deal file, sets frontmatter (status, pax, revenue, probability), adds it to the kanban board in the right column, and updates the pipeline math in the dashboard.
+### `/obsidian-project markting campain`
+Typo and all — Claude searches the vault, finds "Marketing Campaign Q2", confirms: *"Found 'Marketing Campaign Q2' — is this the one?"*, then updates it with context from the conversation.
 
-### "Run a health check on my vault"
-Claude calls `vault_health.py` and summarizes the findings — duplicates, orphans, broken links — and offers to fix the safe ones automatically.
+### `/obsidian-health`
+Claude runs the health check script, groups findings by severity (broken links, duplicates, missing frontmatter, orphaned notes), and offers to fix the safe ones. Asks before touching anything destructive.
 
 ---
 
