@@ -1,219 +1,151 @@
-# 🧠 obsidian-second-brain
+# obsidian-second-brain
 
-**A Claude skill that turns your Obsidian vault into a living second brain — operated autonomously across every Claude surface.**
+A Claude skill that turns your Obsidian vault into a living second brain — operated autonomously across every Claude surface.
 
 Instead of manually saving notes, Claude reads your conversations and writes directly to your vault: creating daily notes, logging dev sessions, updating kanban boards, tracking people, capturing decisions — and always propagating changes everywhere they belong.
 
 ---
 
-## What This Is
+## Install
 
-A [Claude skill](https://docs.anthropic.com/en/docs/build-with-claude/skills) — a set of instructions and scripts that teaches Claude how to operate any Obsidian vault as a persistent OS for your life and work.
+Two commands. That's it.
 
-**The key idea: `_CLAUDE.md`**
-
-A file that lives inside your vault and tells every Claude surface (Desktop, Code, VS Code, terminal) exactly how your vault works — your folder structure, naming conventions, what to auto-save, what to ask first. No memory required. Every session starts with full context.
-
----
-
-## Features
-
-### 🤖 Autonomous vault operations
-Claude writes to your vault from any surface — Claude Desktop, Claude Code, VS Code, terminal — consistently, because they all read `_CLAUDE.md` first.
-
-### 🔗 Propagation rule
-Nothing gets saved in isolation. Create a project → it appears on the kanban board and in today's daily note. Complete a task → it's logged in the project, the board, and the daily note. Every write propagates everywhere it belongs.
-
-### 📋 Full note lifecycle
-- Daily notes with structured sections
-- Dev logs linked to projects
-- People notes with interaction history
-- Kanban boards with proper done/in-progress/waiting columns
-- Deal tracking with pipeline math
-- Goal tracking with progress
-- Mentions log for recognition
-
-### 🔍 Search before write
-Claude searches for existing notes before creating new ones. No duplicates, no vault rot.
-
-### 🏗️ Bootstrap from scratch
-Run one command to generate a complete, production-ready vault structure with all templates, a Home dashboard, kanban boards, and a pre-filled `_CLAUDE.md`.
-
-### 🩺 Health check
-Scan any vault for duplicates, orphaned notes, stale tasks, broken links, missing frontmatter, and unfilled templates.
-
-### ⌨️ Slash commands
-14 built-in commands for every common vault operation — all smart, all context-aware.
-
-### 🤖 Autonomous scheduled agents
-4 agents that run on a schedule with no user intervention: morning briefing, nightly close-out, weekly review, and Sunday health check.
-
-### ⚡ Parallel subagents
-Complex commands like `/obsidian-save` and `/obsidian-health` spawn parallel subagents internally — one per note type or check category — so large operations complete faster and more thoroughly.
-
----
-
-## Quick Start
-
-### Option A — Install into existing Claude setup
-
-1. Clone and run the installer:
 ```bash
+# 1. Clone the skill
 git clone https://github.com/eugeniughelbur/obsidian-second-brain ~/.claude/skills/obsidian-second-brain
-cd ~/.claude/skills/obsidian-second-brain
-bash install.sh
+
+# 2. Run setup (wires the hook, sets vault path, optionally configures MCP)
+bash ~/.claude/skills/obsidian-second-brain/scripts/setup.sh "/path/to/your/vault"
 ```
 
-This copies all 14 slash commands to `~/.claude/commands/` and links the skill into `~/.claude/skills/`. Restart Claude Code when done.
+Then open Claude Code in your vault directory and run:
 
-2. Add the MCP server so Claude can read and write your vault:
-
-**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
-```json
-{
-  "mcpServers": {
-    "obsidian-vault": {
-      "command": "npx",
-      "args": ["-y", "mcp-obsidian", "/path/to/your/vault"]
-    }
-  }
-}
-```
-
-**Claude Code:**
-```bash
-claude mcp add -s user obsidian-vault -- npx -y mcp-obsidian "/path/to/your/vault"
-```
-
-3. Generate your vault's operating manual:
 ```
 /obsidian-init
 ```
 
-Claude will scan your vault structure, read your templates, and generate a customized `_CLAUDE.md`.
+Claude scans your vault structure and generates a `_CLAUDE.md` — its operating manual for your specific vault. That's the file that makes every Claude surface (Desktop, Code, VS Code, terminal) behave consistently in your vault from that point forward.
 
-### Option B — Bootstrap a new vault
+**New vault? Bootstrap from scratch instead:**
 
 ```bash
-python scripts/bootstrap_vault.py \
+python ~/.claude/skills/obsidian-second-brain/scripts/bootstrap_vault.py \
   --path ~/my-vault \
   --name "Your Name" \
   --jobs "Company Name"
 ```
 
-This creates a complete vault with all folders, templates, kanban boards, a Home dashboard with Dataview queries, and a ready-to-use `_CLAUDE.md`.
-
-Then configure the MCP server to point at the new path, restart Claude, and you're live.
+Creates a complete vault with folders, templates, kanban boards, a Home dashboard, and a pre-filled `_CLAUDE.md`. Then run `setup.sh` pointing at the new path.
 
 ---
 
-## How `_CLAUDE.md` Works
+## What It Does
 
-```
-Your Mac
-│
-├── Claude Desktop / Claude Code / VS Code
-│   └── reads _CLAUDE.md on every session start
-│
-└── Your Vault/
-    ├── _CLAUDE.md          ← Claude's operating manual
-    ├── Home.md
-    ├── Daily/
-    ├── Projects/
-    ├── Boards/
-    └── ...
-```
+### The core idea: `_CLAUDE.md`
 
-`_CLAUDE.md` is not magic — it's a plain markdown file. But it's the file that makes every Claude surface behave consistently in your vault, without relying on Claude's memory between sessions.
+A plain markdown file at your vault root that tells every Claude surface exactly how your vault works — folder structure, naming conventions, frontmatter schemas, what to auto-save, what to ask first. No memory needed. Every session starts with full context.
 
-It contains:
-- Your folder map and what each folder is for
-- Naming conventions
-- Frontmatter schemas for your note types
-- What to auto-save vs. what to ask first
-- Active context (current priorities, key people)
-- Kanban format rules
-- Propagation rules (when X happens, also update Y)
+### Propagation rule
 
-Update it when your priorities shift or your structure changes:
-```
-"Claude, update my _CLAUDE.md"
-```
+Nothing gets saved in isolation. Create a project → it appears on the kanban board and in today's daily note. Complete a task → it's logged in the project, the board, and the daily note. Every write ripples everywhere it belongs.
+
+### Search before write
+
+Claude searches for existing notes before creating new ones. No duplicates, no vault rot.
+
+---
+
+## Features
+
+| Feature | What it does |
+|---|---|
+| **14 slash commands** | Every common vault operation — all smart, context-aware |
+| **Background agent** | Fires after every compaction, silently propagates updates to the vault |
+| **Scheduled agents** | Morning briefing, nightly close-out, weekly review, Sunday health check |
+| **Parallel subagents** | Complex commands spawn parallel agents per note type — faster, more thorough |
+| **Vault health check** | Audits for broken links, duplicates, orphans, stale tasks, missing frontmatter |
+| **Bootstrap script** | One command creates a complete production-ready vault from nothing |
 
 ---
 
 ## Commands
 
-14 slash commands, each designed to be smart — Claude reads context, fuzzy-matches names, searches before writing, and propagates everywhere changes belong. You never need to specify where to save something.
+14 slash commands usable from any Claude surface. Each one searches before writing, handles typos, and propagates changes everywhere they belong.
 
 | Command | What it does |
 |---|---|
-| `/obsidian-save` | Reads the whole conversation and saves everything worth keeping — decisions, tasks, people, learnings — to the right places |
-| `/obsidian-daily` | Creates or updates today's daily note, pre-filled with context from the conversation |
-| `/obsidian-log` | Logs a work or dev session — infers the project, creates the log, links from project note and daily |
-| `/obsidian-task [desc]` | Adds a task to the right kanban board with inferred priority, due date, and project link |
-| `/obsidian-person [name]` | Creates or updates a person note from conversation context; logs the interaction in the daily note |
-| `/obsidian-decide [topic]` | Extracts decisions from the conversation and logs them in the right project's Key Decisions section |
-| `/obsidian-capture [idea]` | Quick idea drop with zero friction — saves to Ideas/ and mentions in the daily note |
+| `/obsidian-save` | Reads the whole conversation and saves everything worth keeping — decisions, tasks, people, learnings |
+| `/obsidian-daily` | Creates or updates today's daily note, pre-filled from conversation context |
+| `/obsidian-log` | Logs a work or dev session — infers the project, creates the log, links it everywhere |
+| `/obsidian-task [desc]` | Adds a task to the right kanban board with inferred priority and due date |
+| `/obsidian-person [name]` | Creates or updates a person note; logs the interaction in the daily note |
+| `/obsidian-decide [topic]` | Extracts decisions and logs them in the right project's Key Decisions section |
+| `/obsidian-capture [idea]` | Quick idea capture — saves to Ideas/ and mentions in the daily note |
 | `/obsidian-find [query]` | Smart vault search — returns results with context, not just filenames |
-| `/obsidian-recap [today\|week\|month]` | Synthesizes a time period from daily notes and logs into a narrative summary |
-| `/obsidian-review` | Generates a structured weekly or monthly review note from vault history |
-| `/obsidian-board [name]` | Shows current kanban board state, flags overdue items, updates from conversation |
-| `/obsidian-project [name]` | Creates or updates a project note; adds to board and daily note automatically |
-| `/obsidian-health` | Runs a vault health check grouped by severity; offers to auto-fix safe issues |
-| `/obsidian-init` | Discovers your vault structure and generates a `_CLAUDE.md` operating manual |
+| `/obsidian-recap [today\|week\|month]` | Synthesizes a time period from daily notes and logs into a narrative |
+| `/obsidian-review` | Generates a structured weekly or monthly review note |
+| `/obsidian-board [name]` | Shows kanban board state, flags overdue items, updates from conversation |
+| `/obsidian-project [name]` | Creates or updates a project note; adds to board and daily note |
+| `/obsidian-health` | Vault health check grouped by severity; offers to auto-fix safe issues |
+| `/obsidian-init` | Scans your vault and generates a `_CLAUDE.md` operating manual |
 
-**Name matching:** All commands that take a name argument handle typos and partial matches — Claude searches the vault, shows what it found, and confirms before acting.
+**Typo handling:** all name arguments fuzzy-match — Claude finds the closest match, confirms, then acts.
+
+---
+
+## Background Agent
+
+The background agent is the most hands-off feature. It fires automatically after every context compaction with no user action needed.
+
+```
+PostCompact → obsidian-bg-agent.sh → claude -p (headless) → vault updated
+```
+
+After each compaction, a headless Claude subprocess wakes up, reads `_CLAUDE.md`, scans the session summary for vault-worthy items, and writes updates everywhere they belong — people notes, project notes, dev logs, kanban boards, today's daily note. You keep working. The vault updates itself.
+
+`setup.sh` wires this automatically. To check it's working: `tail -f /tmp/obsidian-bg-agent.log`
 
 ---
 
 ## Parallel Subagents
 
-Complex commands don't run sequentially — they spawn parallel subagents internally, one per task group, and merge the results when all finish. This means a single `/obsidian-save` on a long conversation handles people, projects, tasks, decisions, and ideas all at the same time.
+Complex commands don't run sequentially — they spawn parallel subagents, one per task group, and merge results when all finish.
 
 | Command | What runs in parallel |
 |---|---|
 | `/obsidian-save` | People agent · Projects agent · Tasks agent · Decisions agent · Ideas agent |
 | `/obsidian-health` | Links agent · Duplicates agent · Frontmatter agent · Staleness agent · Orphans agent |
-| `/obsidian-recap` | One agent per daily note in the date range, all reading simultaneously |
+| `/obsidian-recap` | One agent per daily note in the date range |
 | `/obsidian-init` | Dashboard agent · Templates agent · Boards agent · Note samples agent |
-
-After all agents finish, the main thread merges results, updates the daily note, and reports back. You just see the final output.
 
 ---
 
 ## Scheduled Agents
 
-Four agents that run autonomously on a schedule — no user action required. Set them up once with `/schedule` in Claude Code.
+Four agents that run on a schedule — no user action required. Set up once with `/schedule` in Claude Code.
 
 | Agent | Schedule | What it does |
 |---|---|---|
 | `obsidian-morning` | Daily 8:00 AM | Creates today's daily note, surfaces overdue tasks and stale projects |
-| `obsidian-nightly` | Daily 10:00 PM | Closes out the day, appends an End of Day summary, moves completed tasks to Done |
-| `obsidian-weekly` | Fridays 6:00 PM | Generates a weekly review note from the week's daily notes and completed tasks |
-| `obsidian-health-check` | Sundays 9:00 PM | Runs the vault health check and saves a report — never auto-fixes, only reports |
+| `obsidian-nightly` | Daily 10:00 PM | Closes the day, appends an End of Day summary, moves done tasks |
+| `obsidian-weekly` | Fridays 6:00 PM | Generates a weekly review from the week's daily notes and completed tasks |
+| `obsidian-health-check` | Sundays 9:00 PM | Runs health check, saves report — never auto-fixes, only reports |
 
-To set them up:
 ```
 /schedule
 ```
 
 Then tell Claude which agents you want and at what times.
 
-```
-/schedule list           # see active scheduled agents
-/schedule remove name    # remove one
-```
-
 ---
 
 ## Vault Health Check
 
 ```bash
-python scripts/vault_health.py --path ~/my-vault
+python ~/.claude/skills/obsidian-second-brain/scripts/vault_health.py --path ~/my-vault
 ```
 
-Reports:
+Reports (by severity):
 - 🔴 Unfilled template syntax left in notes
 - 🟡 Possible duplicate notes
 - 🟡 Stale / overdue tasks
@@ -222,25 +154,35 @@ Reports:
 - ⚪ Orphaned notes (nothing links to them)
 - ⚪ Empty folders
 
-For machine-readable output (to pipe into Claude):
+For machine-readable output:
 ```bash
 python scripts/vault_health.py --path ~/my-vault --json
 ```
 
 ---
 
-## Skill Structure
+## How `_CLAUDE.md` Works
 
 ```
-obsidian-second-brain/
-├── SKILL.md                          ← Core instructions for Claude
-├── references/
-│   ├── vault-schema.md               ← Folder structure + frontmatter specs
-│   ├── write-rules.md                ← How Claude writes, links, and propagates
-│   └── claude-md-template.md        ← Template for generating _CLAUDE.md
-└── scripts/
-    ├── bootstrap_vault.py            ← Bootstrap a complete vault from scratch
-    └── vault_health.py               ← Audit a vault for structural issues
+Your machine
+│
+├── Claude Desktop / Claude Code / VS Code / terminal
+│   └── reads _CLAUDE.md at session start
+│
+└── Your Vault/
+    ├── _CLAUDE.md          ← Claude's operating manual for this vault
+    ├── Home.md
+    ├── Daily/
+    ├── Projects/
+    ├── Boards/
+    └── ...
+```
+
+`_CLAUDE.md` is a plain markdown file. It's what makes every Claude surface behave consistently in your vault without relying on memory between sessions. It contains your folder map, naming conventions, frontmatter schemas, auto-save rules, active context, kanban format, and propagation rules.
+
+Update it when your priorities shift:
+```
+"Claude, update my _CLAUDE.md"
 ```
 
 ---
@@ -249,26 +191,41 @@ obsidian-second-brain/
 
 | Plugin | Why |
 |---|---|
-| [Dataview](https://github.com/blacksmithgu/obsidian-dataview) | Powers the Home dashboard queries |
+| [Dataview](https://github.com/blacksmithgu/obsidian-dataview) | Powers Home dashboard queries |
 | [Templater](https://github.com/SilentVoid13/Templater) | Powers the Templates/ folder |
 | [Kanban](https://github.com/mgmeyers/obsidian-kanban) | Powers the Boards/ folder |
 | [Calendar](https://github.com/liamcain/obsidian-calendar-plugin) | Daily note navigation |
 
 ---
 
+## Skill Structure
+
+```
+obsidian-second-brain/
+├── SKILL.md                          ← Core instructions for Claude
+├── hooks/
+│   └── obsidian-bg-agent.sh          ← PostCompact background agent hook
+├── references/
+│   ├── vault-schema.md               ← Folder structure + frontmatter specs
+│   ├── write-rules.md                ← How Claude writes, links, and propagates
+│   └── claude-md-template.md        ← Template for generating _CLAUDE.md
+└── scripts/
+    ├── setup.sh                      ← One-command installer
+    ├── bootstrap_vault.py            ← Bootstrap a complete vault from scratch
+    └── vault_health.py               ← Audit a vault for structural issues
+```
+
+---
+
 ## Examples
 
-### `/obsidian-save`
-After a long conversation about a new project: Claude scans the whole chat, identifies the project, the decisions made, the people mentioned, and any tasks committed to. Creates the project note, adds a card to the kanban board, stubs out people notes, logs tasks, and links everything from today's daily note. No instructions needed.
+**`/obsidian-save`** — after a long conversation about a new project: Claude scans the whole chat, identifies the project, the decisions made, the people mentioned, and any tasks committed to. Creates the project note, adds a card to the kanban board, stubs out people notes, logs tasks, links everything from today's daily note. No instructions needed.
 
-### `/obsidian-log`
-After a dev session: Claude infers the project from context, writes a dev log with what was worked on, problems encountered, and next steps. Links it from the project's Recent Activity section and today's daily note automatically.
+**`/obsidian-log`** — after a dev session: Claude infers the project, writes a dev log with what was worked on, problems encountered, and next steps. Links it from the project's Recent Activity section and today's daily note automatically.
 
-### `/obsidian-project markting campain`
-Typo and all — Claude searches the vault, finds "Marketing Campaign Q2", confirms: *"Found 'Marketing Campaign Q2' — is this the one?"*, then updates it with context from the conversation.
+**`/obsidian-project markting campain`** — typo and all: Claude searches the vault, finds "Marketing Campaign Q2", confirms *"Found 'Marketing Campaign Q2' — is this the one?"*, then updates it from the conversation.
 
-### `/obsidian-health`
-Claude runs the health check script, groups findings by severity (broken links, duplicates, missing frontmatter, orphaned notes), and offers to fix the safe ones. Asks before touching anything destructive.
+**`/obsidian-health`** — Claude runs the script, groups findings by severity, offers to fix safe issues. Asks before touching anything destructive.
 
 ---
 
