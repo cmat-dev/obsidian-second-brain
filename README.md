@@ -63,6 +63,8 @@ A background agent updates it during your sessions. Scheduled agents run morning
 | Contradictions | You don't know they exist | `/reconcile` resolves them automatically |
 | Synthesis | You connect dots manually | `/synthesize` finds patterns across sources on its own |
 | Sharing vault data | Only Claude can read it | `/export` gives any AI tool a clean snapshot |
+| Facts change over time | Old info gets overwritten | Temporal facts track the full timeline -- nothing is lost |
+| Starting a new session | Re-explain who you are | `CRITICAL_FACTS.md` loads your identity in ~120 tokens |
 
 ---
 
