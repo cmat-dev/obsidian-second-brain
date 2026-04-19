@@ -101,6 +101,10 @@ Every write operation must ask: *where else does this belong?*
 | A deal update | Side Biz / Deals kanban, Dashboard totals |
 | A decision made | Project note (Key Decisions), daily note |
 | A mention/shoutout | Mentions Log, person's note, daily note |
+| A hook, contrarian angle, or content idea | `social-media/ideas.md` (if folder exists) |
+| A specific reusable number or stat | `social-media/data-points.md` (if folder exists) |
+| An external post that performed well + why | `social-media/swipe-file.md` (if folder exists) |
+| Research findings worth keeping | `social-media/research/YYYY-MM-DD — topic.md` (if folder exists) |
 | Any vault write | `log.md` (append timestamped entry), `index.md` (update if new note created) |
 
 Always propagate. Never create a single orphaned note.
