@@ -120,7 +120,7 @@ def main(argv: list[str]) -> int:
         f"{sources_md}"
     )
     path = vault.write_note("research", topic, fm, note_body)
-    print(f"\n💾 Saved to vault: {path.name}", file=sys.stderr)
+    vault.print_save_links(path)
     vault.append_to_log(f"research on \"{topic}\" — saved to {path.name}")
     return 0
 

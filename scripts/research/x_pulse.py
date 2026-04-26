@@ -93,8 +93,7 @@ def main(argv: list[str]) -> int:
     }
     note_body = f"## For future Claude\n\n{preamble}\n\n## Topic\n\n{topic}\n\n## Pulse\n\n{body}\n"
     path = vault.write_note("x-pulse", topic, fm, note_body)
-    rel = path.relative_to(path.parents[2]) if "Eugeniu's Vault" in str(path) else path
-    print(f"\n💾 Saved to vault: {rel}", file=sys.stderr)
+    vault.print_save_links(path)
     vault.append_to_log(f"x-pulse on \"{topic}\" — saved to {path.name}")
     print(
         f"---\n[cost: ${result['cost_usd']:.4f} · tokens in/out: {result['input_tokens']}/{result['output_tokens']}]",

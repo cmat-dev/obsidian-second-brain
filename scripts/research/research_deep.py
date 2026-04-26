@@ -247,7 +247,7 @@ def main(argv: list[str]) -> int:
         + f"\n\n## Synthesis\n\n{body}\n"
     )
     path = vault.write_note("research-deep", topic, fm, note_body)
-    print(f"\n💾 Saved to vault: {path.name}", file=sys.stderr)
+    vault.print_save_links(path)
 
     # Emit JSON instruction block for the calling Claude to handle propagation
     propagation_payload = {

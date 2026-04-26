@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 import re
 from typing import Any
+from urllib.parse import quote
 
 from .config import VAULT_PATH
 
@@ -84,6 +85,24 @@ def _yaml_scalar(v: Any) -> str:
         s = s.replace('"', '\\"')
         return f'"{s}"'
     return s
+
+
+def obsidian_uri(note_path: Path) -> str:
+    """Build an obsidian://open?... URI that opens this note directly in Obsidian."""
+    vault_name = VAULT_PATH.name
+    rel = note_path.relative_to(VAULT_PATH)
+    file_no_ext = str(rel).removesuffix(".md")
+    return f"obsidian://open?vault={quote(vault_name)}&file={quote(file_no_ext)}"
+
+
+def print_save_links(note_path: Path, file=None) -> None:
+    """Print save confirmation with clickable Obsidian + VS Code links to the saved note."""
+    import sys
+    out = file or sys.stderr
+    rel = note_path.relative_to(VAULT_PATH)
+    print(f"\n💾 Saved: {rel}", file=out)
+    print(f"   📖 Open in Obsidian: {obsidian_uri(note_path)}", file=out)
+    print(f"   ✏️  Open in VS Code:  code \"{note_path}\"", file=out)
 
 
 def append_to_log(operation_summary: str) -> None:

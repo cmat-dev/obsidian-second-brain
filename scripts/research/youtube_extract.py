@@ -151,7 +151,7 @@ def main(argv: list[str]) -> int:
         f"## Summary\n\n{result['text']}\n"
     )
     path = vault.write_note("youtube", title, fm, note_body)
-    print(f"\n💾 Saved to vault: {path.name}", file=sys.stderr)
+    vault.print_save_links(path)
     vault.append_to_log(f"youtube on \"{title}\" — saved to {path.name}")
     print(
         f"---\n[cost: ${result['cost_usd']:.4f} · transcript: {len(transcript) if transcript else 0} chars · comments: {len(comments)}]",
