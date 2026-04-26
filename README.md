@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://oosmetrics.com/repo/eugeniughelbur/obsidian-second-brain"><img src="https://api.oosmetrics.com/api/v1/badge/achievement/7a416981-2e9b-43c5-8c99-4a4f1dfc5b77.svg" alt="oosmetrics — Top 2 in Secrets by acceleration (2026-04-23)" height="44" /></a>
+  <a href="https://oosmetrics.com/repo/eugeniughelbur/obsidian-second-brain"><img src="https://img.shields.io/badge/oosmetrics-%F0%9F%8F%86%20Top%202%20in%20Secrets%20by%20acceleration%20%E2%80%A2%202026--04--23-DAA520?style=for-the-badge&labelColor=2C2C2C" alt="oosmetrics: Top 2 in Secrets by acceleration (2026-04-23)" /></a>
 </p>
 
 <h1 align="center">obsidian-second-brain</h1>
