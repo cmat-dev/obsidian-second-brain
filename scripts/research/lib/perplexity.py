@@ -1,5 +1,6 @@
 """Perplexity Sonar client. Uses the OpenAI-compatible /chat/completions endpoint."""
 
+import re
 import time
 import requests
 from typing import Any
@@ -9,6 +10,10 @@ from .config import PERPLEXITY_API_KEY, PERPLEXITY_RESEARCH_MODEL, PERPLEXITY_DE
 API_URL = "https://api.perplexity.ai/chat/completions"
 MAX_RETRIES = 3
 BACKOFF_SECONDS = (1, 3, 8)
+
+# sonar-reasoning and sonar-deep-research wrap their internal deliberation in <think>...</think>.
+# Strip it before returning to keep the output clean.
+_THINK_BLOCK = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
 
 
 def call(prompt: str, *, model: str | None = None, deep: bool = False, max_tokens: int = 4000) -> dict[str, Any]:
@@ -31,6 +36,11 @@ def call(prompt: str, *, model: str | None = None, deep: bool = False, max_token
             if r.status_code == 200:
                 data = r.json()
                 text = data["choices"][0]["message"]["content"]
+                text = _THINK_BLOCK.sub("", text)
+                # Handle unclosed <think> (truncated mid-reasoning) — drop everything from it onward
+                if "<think>" in text:
+                    text = text.split("<think>")[0]
+                text = text.strip()
                 citations = data.get("citations") or data.get("search_results") or []
                 return {
                     "text": text,

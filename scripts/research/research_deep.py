@@ -105,18 +105,25 @@ def parse_queries(gap_text: str) -> list[tuple[str, str]]:
     return queries[:5]
 
 
-SYNTHESIS_PROMPT = """You are synthesizing a vault-first research delta. The vault note that comes out of this will be read by future-Claude to answer questions years from now.
+SYNTHESIS_PROMPT = """You are synthesizing a vault-first research delta for a personal knowledge vault. Future-Claude will read this note years from now to answer the user's questions, so be specific, structured, and cite everything.
 
 TOPIC: "{topic}"
 TODAY: {today}
 
-VAULT BASELINE (what we already knew):
+VAULT BASELINE (what the vault already knew):
 {baseline_summary}
 
 NEW EXTERNAL FINDINGS:
 {findings}
 
-Produce EXACTLY this structure (markdown):
+CRITICAL FORMAT RULES — DO NOT DEVIATE:
+- Output ONLY the six sections below, in this exact order, with these exact headers.
+- Use markdown bullets (- ...) inside each section. NO long narrative paragraphs.
+- Do NOT add an introduction, preamble, conclusion, or "report" framing.
+- Do NOT exceed ~1200 words total.
+- Every external claim has a recency marker (date) AND source domain.
+- Every vault reference uses [[wikilinks]] with the exact path.
+- Be ruthless about contradictions — flagging them is the most valuable output.
 
 ## What's New Since Vault Baseline
 - [Specific new fact from external sources, with recency marker and source domain]
@@ -127,23 +134,19 @@ Produce EXACTLY this structure (markdown):
 - [...]
 
 ## Contradictions / Updates Needed
-- [Specific claim where new external info contradicts a vault note — name the vault file path and the specific contradiction]
+- [Specific claim where new external info contradicts a vault note — name the [[vault file path]] and the specific contradiction]
 - [...]
 
 ## Synthesis
-[3-5 paragraphs synthesizing baseline + new findings into a current view. Cite both vault sources [[wikilinks]] and external URLs.]
+- [3-6 short bullets, NOT paragraphs. Each bullet captures one synthesized insight that combines baseline + new findings, with [[wikilink]] or URL citations inline]
 
 ## Recommended Vault Updates
 - [Specific instruction for /obsidian-save: e.g. "Update [[Knowledge/AI memory]] with the Anthropic memory tool launch (2026-02)"]
-- [Each instruction must reference a specific vault file path or be clear about what to create]
+- [Each instruction must reference a specific vault file path or clearly describe a new note to create]
 
 ## Open Questions
-- [What's still unclear after this round]
-
-Rules:
-- Every external claim has a recency marker AND source domain.
-- Every vault reference uses [[wikilinks]].
-- Be ruthless about contradictions — flagging them is the most valuable output.
+- [What's still unclear after this round of research]
+- [...]
 """
 
 
@@ -211,7 +214,9 @@ def main(argv: list[str]) -> int:
         findings=findings,
     )
     try:
-        synth = perplexity.call(synth_prompt, deep=True, max_tokens=5000)
+        # Use sonar-reasoning-pro for synthesis (follows instructions, supports markdown structure).
+        # sonar-deep-research has a hardcoded "10k-word academic narrative" that overrides our prompt.
+        synth = perplexity.call(synth_prompt, model="sonar-reasoning-pro", max_tokens=3500)
     except Exception as e:
         print(f"❌ Phase 4 (synthesis) failed: {e}", file=sys.stderr)
         return 1
@@ -235,7 +240,7 @@ def main(argv: list[str]) -> int:
         "topic": topic,
         "tags": ["research", "research-deep", _slug_tag(topic)],
         "vault-baseline-notes": [h["path"] for h in hits],
-        "queries-run": [{"q": q, "source": s} for q, s in queries],
+        "queries-run": [f"[{s}] {q}" for q, s in queries],
         "sources": sources_collected,
         "ai-first": True,
     }
