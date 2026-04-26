@@ -15,13 +15,19 @@
 <p align="center">
   <strong>Your Obsidian vault is dead weight. This skill makes it alive.</strong>
   <br /><br />
-  <em>26 commands &middot; self-rewriting knowledge base &middot; auto-synthesis &middot; thinking tools that argue with you &middot; 4 scheduled agents &middot; 4 role presets</em>
+  <em>31 commands &middot; self-rewriting knowledge base &middot; auto-synthesis &middot; thinking tools that argue with you &middot; live research from X, the web, and YouTube &middot; 4 scheduled agents &middot; 4 role presets</em>
   <br /><br />
   <a href="#what-happens-when-you-install-this">See it in action</a> &middot;
-  <a href="#24-commands">All commands</a> &middot;
+  <a href="#31-commands">All commands</a> &middot;
   <a href="#install">Install</a> &middot;
   <a href="#choose-your-preset">Presets</a> &middot;
   <a href="https://github.com/eugeniughelbur/obsidian-second-brain/discussions">Discussions</a>
+</p>
+
+<p align="center">
+  <strong>NEW in v0.5</strong> — Research toolkit: <code>/x-read</code> · <code>/x-pulse</code> · <code>/research</code> · <code>/research-deep</code> · <code>/youtube</code><br/>
+  <em>Pull live X posts, web research with citations, and YouTube transcripts straight into your vault as AI-first notes. <br/>
+  Vault-first synthesis knows what you already know and fills only the gaps.</em>
 </p>
 
 ---
@@ -61,6 +67,21 @@ Claude generates a visual canvas of your entire vault. Hub nodes centered, color
 **You start a new day:** `/obsidian-daily`
 Claude pulls your calendar events, overdue tasks, and overnight changes into today's note. Your morning starts informed.
 
+**Someone shares an X post:** `/x-read https://x.com/...`
+Grok with live X access fetches the post, the thread, and the replies. Returns verbatim text + TL;DR + key claims + reply sentiment + voices to watch. No more screenshots.
+
+**You're planning today's content:** `/x-pulse "AI automation"`
+Grok scans X for what's trending in your topic right now. Returns 3-5 emerging themes (with rep posts + key voices), gaps nobody is filling, hook formats that are working, and 3 specific post ideas you could write today.
+
+**You need real research:** `/research "AI memory tools"`
+Perplexity Sonar Pro pulls a deep dossier with citations: summary, key facts (every claim with a recency marker and source domain), timeline, key players, contrarian views, recommended further reading, open questions. Saved to your vault, auto-opens in Obsidian.
+
+**You want vault-first deep research:** `/research-deep "AI memory tools"`
+Scans your vault for what you already know. Identifies gaps. Spawns 3-5 targeted searches via Perplexity (web) and Grok (X discourse). Synthesizes a delta report — what's new, what's confirmed, contradictions to resolve, recommended vault updates. Vault baseline doesn't get re-researched. Only gaps get filled.
+
+**You hit a great YouTube video:** `/youtube https://youtu.be/...`
+Free transcript via youtube-transcript-api. Optional metadata + top comments via YouTube Data API v3. Grok summarizes into TL;DR, Key Points, Notable Quotes (verbatim), Themes, Comment Sentiment, and Worth Following Up On. Saved as an AI-first note in your vault.
+
 **You never open Obsidian.** Everything happens through Claude.
 
 ---
@@ -80,6 +101,12 @@ Claude pulls your calendar events, overdue tasks, and overnight changes into tod
 | Sharing vault data | Only Claude can read it | `/export` gives any AI tool a clean snapshot |
 | Facts change over time | Old info gets overwritten | Bi-temporal facts track when it was true AND when the vault learned it |
 | Starting a new session | Re-explain who you are | `CRITICAL_FACTS.md` loads your identity in ~120 tokens |
+| Reading an X thread | Open X, scroll, screenshot, paste | `/x-read [url]` returns post + thread + sentiment + voices |
+| Knowing what to post | Guess what's trending | `/x-pulse` scans X and returns hot themes + gaps + hooks + post ideas |
+| Web research | Open 12 tabs, copy quotes manually | `/research [topic]` returns a sourced dossier with recency markers |
+| Researching what you already know | Re-research from scratch | `/research-deep` scans vault first, fills only the gaps, flags contradictions |
+| YouTube videos | Watch passively, forget | `/youtube [url]` transcript + summary + quotes saved to vault |
+| Vault notes for future-Claude | Notes for human reading | AI-first rule: every note has "For future Claude" preamble + recency markers + citations |
 
 ---
 
@@ -103,6 +130,11 @@ Claude pulls your calendar events, overdue tasks, and overnight changes into tod
   |                                          |
   +------------------------------------------+
   |                                          |
+  |   LAYER 4: Research Toolkit (5 commands) |
+  |   Claude pulls knowledge in              |
+  |                                          |
+  +------------------------------------------+
+  |                                          |
   |   ALWAYS ON                              |
   |   Background agent + 4 scheduled agents  |
   |   Auto-synthesis + save reminders        |
@@ -113,6 +145,7 @@ Claude pulls your calendar events, overdue tasks, and overnight changes into tod
 **Layer 1** saves, organizes, ingests, reconciles, exports, and maintains your vault.
 **Layer 2** challenges your ideas, surfaces hidden patterns, bridges unrelated domains, and graduates ideas into projects.
 **Layer 3** loads your identity and current state so every session picks up where the last one ended.
+**Layer 4** pulls live external knowledge into the vault: X posts, X trends, web research with citations, YouTube transcripts. Vault-first synthesis knows what you already know.
 **Always On** keeps the vault alive without you lifting a finger.
 
 ---
@@ -224,6 +257,85 @@ An idea from 3 weeks ago. Claude reads it, finds related projects and people, ge
 6. Updates `index.md`, `log.md`, daily note
 
 **One URL in. The vault rewrites itself.**
+
+</details>
+
+<details>
+<summary><strong>See the research toolkit in action</strong></summary>
+
+<br />
+
+**`/x-read https://x.com/garrytan/status/2048121438914154664`**
+
+Grok with live X access fetches the post and replies. You get verbatim text, TL;DR, key claims, reply sentiment (~70% positive, 20% skeptical, 10% off-topic), notable counter-arguments with the @ handles of who said them, and "voices to watch" — replies that added real signal. ~$0.05/call.
+
+---
+
+**`/x-pulse "AI automation"`**
+
+```
+WHAT'S HOT (last 24-72h)
+  1. Agentic AI vs Basic Automation — voices: @NVIDIAAP, @woisau1
+  2. Self-Improving Sovereign Agents — voices: @tom_doerr, @AIDailyGems
+  3. Control Layers & Execution Gaps — voices: @ZIQING_JP
+
+WHAT'S UNDEREXPLORED
+  - ROI numbers for non-developer small business users
+  - Integration of digital agents with physical robotics
+
+HOOKS THAT ARE WORKING
+  - "Automation executes. Autonomy reasons." — @NVIDIAAP
+
+POST IDEAS FOR YOU TODAY
+  1. Thread: "I gave an open-source agent its own GitHub repo and watched it self-improve"
+  2. Single: "Automation executes. Autonomy reasons. Here's the control layer..."
+```
+
+What you'd spend 2 hours scrolling X to find. Returned in 30 seconds for ~$0.13.
+
+---
+
+**`/research "AI memory tools"`**
+
+Returns a structured dossier: Summary, Key Facts (each with `(as of YYYY-MM, source.com)`), Timeline, Key Players, Contrarian Views, Recommended Further Reading, Open Questions, full citations. Saved to `Research/Web/` as an AI-first note. ~$0.05/call.
+
+---
+
+**`/research-deep "AI memory tools"`** — the killer
+
+```
+Phase 1: Vault scan
+  Found 8 relevant notes (e.g. Knowledge/2026-02-15 — Mem0 vs Letta.md)
+
+Phase 2: Gap analysis (Perplexity sonar-pro)
+  Identified 5 targeted queries to fill what vault is silent or stale on
+
+Phase 3: Targeted research
+  [web] Anthropic Claude memory tool 2026 features
+  [web] Mem0 Series A reactions and concerns
+  [x]   developer reactions to Letta vs Mem0
+  ...
+
+Phase 4: Synthesis (sonar-reasoning-pro)
+  → What's New Since Vault Baseline
+  → What's Confirmed
+  → Contradictions / Updates Needed (with [[wikilinks]] to specific vault files)
+  → Synthesis bullets
+  → Recommended Vault Updates (instructions for /obsidian-save)
+  → Open Questions
+```
+
+Vault-first means it doesn't waste tokens re-researching what you already knew. ~$0.40/call.
+
+---
+
+**`/youtube https://youtu.be/...`**
+
+Free transcript via youtube-transcript-api + optional metadata + comments via YouTube Data API v3 (free tier). Grok summarizes into TL;DR, Key Points, Notable Quotes (verbatim), Themes, Comment Sentiment, and Worth Following Up On. ~$0.04 for the Grok call. Frontmatter includes view count, channel, published date, like count for Dataview queries.
+
+---
+
+**Auto-open after every save** — Obsidian pops open at the new note. Disable with `RESEARCH_AUTOOPEN=0` if you're running batch saves.
 
 </details>
 
@@ -346,6 +458,28 @@ bash ~/.claude/skills/obsidian-second-brain/scripts/setup.sh "/path/to/your/vaul
 ```
 
 Then: `/obsidian-init`
+
+### Research toolkit (optional)
+
+The 5 research commands need API keys. Run `install.sh` and answer "y" to the research prompt — it'll set up `~/.config/obsidian-second-brain/.env`. Or do it manually:
+
+```bash
+mkdir -p ~/.config/obsidian-second-brain
+cp .env.example ~/.config/obsidian-second-brain/.env
+chmod 600 ~/.config/obsidian-second-brain/.env
+# then paste keys into the file
+uv sync   # installs Python deps
+```
+
+Keys you need:
+
+| Key | Where | Required for | Cost |
+|---|---|---|---|
+| `XAI_API_KEY` | [console.x.ai](https://console.x.ai) | `/x-read`, `/x-pulse`, `/research-deep` X pulse, `/youtube` summary | Pay-per-use, ~$0.05/call |
+| `PERPLEXITY_API_KEY` | [perplexity.ai/settings/api](https://perplexity.ai/settings/api) | `/research`, `/research-deep` | Pay-per-use, ~$0.02-$0.50/call |
+| `YOUTUBE_API_KEY` | [console.cloud.google.com](https://console.cloud.google.com) | `/youtube` metadata + comments (optional — transcripts free without) | Free tier 10k units/day |
+
+Without keys, the existing 26 vault commands still work fine. Research toolkit just degrades gracefully.
 
 ---
 
