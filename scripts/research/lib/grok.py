@@ -17,12 +17,14 @@ def call(
     *,
     command: str,
     model: str | None = None,
-    live_search: dict | None = None,
+    tools: list[dict] | None = None,
     max_output_tokens: int = 4000,
 ) -> dict[str, Any]:
-    """Call xAI's responses endpoint. Returns {text, usage, raw}.
+    """Call xAI's /v1/responses endpoint. Returns {text, usage, raw}.
 
-    live_search example: {"mode": "on", "sources": [{"type": "x"}]}
+    tools example: [{"type": "x_search"}] for live X access,
+                   [{"type": "web_search"}] for web,
+                   or both. Grok decides when to invoke each.
     """
     model = model or GROK_MODEL
     headers = {
@@ -34,8 +36,8 @@ def call(
         "input": prompt,
         "max_output_tokens": max_output_tokens,
     }
-    if live_search:
-        body["search_parameters"] = live_search
+    if tools:
+        body["tools"] = tools
 
     last_err: Exception | None = None
     for attempt in range(MAX_RETRIES):
@@ -49,7 +51,7 @@ def call(
                 output_tokens = u.get("output_tokens") or u.get("completion_tokens") or 0
                 cost = usage.estimate_cost(model, input_tokens, output_tokens)
                 usage.log_call(command, model, input_tokens, output_tokens, cost,
-                               extra={"live_search": bool(live_search)})
+                               extra={"tools": [t.get("type") for t in (tools or [])]})
                 return {
                     "text": text,
                     "input_tokens": input_tokens,

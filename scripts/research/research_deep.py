@@ -193,7 +193,7 @@ def main(argv: list[str]) -> int:
                 r = grok.call(
                     f"On X right now, what are people saying about: {q}\n\nReturn 3-5 specific posts/voices with @ handles and post URLs. No commentary outside that.",
                     command="research-deep",
-                    live_search={"mode": "on", "sources": [{"type": "x"}]},
+                    tools=[{"type": "x_search"}],
                     max_output_tokens=1200,
                 )
                 findings_chunks.append(f"### X — {q}\n\n{r['text']}")

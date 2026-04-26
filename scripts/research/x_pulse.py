@@ -58,7 +58,7 @@ def main(argv: list[str]) -> int:
         result = grok.call(
             prompt,
             command="x-pulse",
-            live_search={"mode": "on", "sources": [{"type": "x"}]},
+            tools=[{"type": "x_search"}],
             max_output_tokens=4000,
         )
     except SystemExit:
