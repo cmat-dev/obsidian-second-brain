@@ -19,6 +19,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - GitHub Pages site with Cayman theme + jekyll-seo-tag + jekyll-sitemap
 - Banner image and polished author hero in README
 
+### Fixed
+
+- `pyproject.toml` version was `0.1.0`, now matches the v0.6.0 release tag.
+
 ## [0.6.0] — 2026-04-26
 
 ### Added
