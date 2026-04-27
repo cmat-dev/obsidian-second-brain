@@ -38,3 +38,7 @@ Use the obsidian-second-brain skill. Execute `/research-deep [topic]`:
 8. If any phase fails (e.g. Grok unavailable), the script continues with what it has and flags the gap in the synthesis. Surface partial results — don't silently fail. The graceful degradation rule: a partial synthesis is better than no synthesis.
 
 9. Cost note: this command makes multiple API calls (Perplexity + Grok). Typical run: $0.20-$0.80 depending on topic depth and gap count. The script logs Grok calls to the usage log automatically.
+
+---
+
+**AI-first rule:** Every note created or updated by this command MUST follow `references/ai-first-rules.md` — `## For future Claude` preamble, rich frontmatter (`type`, `date`, `tags`, `ai-first: true`, plus type-specific fields), recency markers per external claim, mandatory `[[wikilinks]]` for every person/project/concept referenced, sources preserved verbatim with URLs inline, and confidence levels where applicable. The vault is for future-Claude retrieval — not human reading.

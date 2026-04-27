@@ -26,3 +26,7 @@ Use the obsidian-second-brain skill. Execute `/youtube [url]`:
 7. If the video has no captions (transcript unavailable) AND no metadata (no API key), the script will fail with a clear message — surface it. Suggest the user picks a different video or provides metadata manually.
 
 8. If the user asks to research something mentioned in the "Worth Following Up On" section, route that to `/research [topic]`.
+
+---
+
+**AI-first rule:** Every note created or updated by this command MUST follow `references/ai-first-rules.md` — `## For future Claude` preamble, rich frontmatter (`type`, `date`, `tags`, `ai-first: true`, plus type-specific fields), recency markers per external claim, mandatory `[[wikilinks]]` for every person/project/concept referenced, sources preserved verbatim with URLs inline, and confidence levels where applicable. The vault is for future-Claude retrieval — not human reading.
