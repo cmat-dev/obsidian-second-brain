@@ -34,7 +34,6 @@ exclude:
   - CITATION.cff
   - SKILL.md
   - architecture.md
-  - llms.txt
   - hooks
   - commands
   - references
