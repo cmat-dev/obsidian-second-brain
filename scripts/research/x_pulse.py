@@ -5,10 +5,9 @@ Output: hot themes (with rep posts + voices), gaps, hooks working, voice/tone, p
 Default behavior: print to chat AND save AI-first note to Research/X-pulse/.
 """
 
-import json
 import sys
 from datetime import datetime
-from pathlib import Path
+
 from .lib import grok, vault
 
 PROMPT_TEMPLATE = """You are a social-media-aware analyst with live access to X. Topic: "{topic}"
@@ -77,7 +76,7 @@ def main(argv: list[str]) -> int:
     # AI-first note save
     now = datetime.now()
     preamble = (
-        f"For future Claude: This note is a Grok x_search scan of X discourse "
+        f"For future agent: This note is a Grok x_search scan of X discourse "
         f"about \"{topic}\" performed on {now.strftime('%Y-%m-%d %H:%M')}. It captures "
         f"emerging themes, gaps, hook formats, and content angles for the user's posting strategy. "
         f"X posts are time-sensitive - claims here may be stale within days."
@@ -92,7 +91,7 @@ def main(argv: list[str]) -> int:
         "cost-usd": round(result["cost_usd"], 4),
         "ai-first": True,
     }
-    note_body = f"## For future Claude\n\n{preamble}\n\n## Topic\n\n{topic}\n\n## Pulse\n\n{body}\n"
+    note_body = f"## For future agent\n\n{preamble}\n\n## Topic\n\n{topic}\n\n## Pulse\n\n{body}\n"
     path = vault.write_note("x-pulse", topic, fm, note_body)
     vault.print_save_links(path)
     vault.append_to_log(f"x-pulse on \"{topic}\" - saved to {path.name}")

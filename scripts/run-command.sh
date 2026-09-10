@@ -22,7 +22,11 @@ set -euo pipefail
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="${OBSIDIAN_SECOND_BRAIN_HOME:-$(cd "$SELF_DIR/.." && pwd)}"
 CODEX_BIN="${CODEX_BIN:-codex}"
-CONFIG_FILE="$HOME/.config/obsidian-second-brain/config.env"
+# Home for config and Claude Code state (OSB_HOME, OSB_WIN): USERPROFILE on
+# Windows shells, HOME elsewhere. See platform-home.sh beside this script.
+. "$SELF_DIR/platform-home.sh"
+osb_platform_home
+CONFIG_FILE="$OSB_HOME/.config/obsidian-second-brain/config.env"
 [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
 
 PRINT_ONLY=0

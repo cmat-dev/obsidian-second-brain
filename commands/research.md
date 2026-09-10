@@ -4,6 +4,7 @@ category: research
 triggers_en: ["research this", "look up", "find information about", "perplexity research"]
 triggers_es: ["investiga esto", "búscalo", "busca información sobre", "investigación con perplexity"]
 triggers_pt: ["pesquise isto", "procure", "encontre informações sobre", "pesquisa perplexity"]
+triggers_zh: ["研究一下这个问题", "帮我查资料", "搜索关于这个主题的信息", "做一份带引用的网络研究"]
 ---
 
 Use the obsidian-second-brain skill. Execute `/research [topic]`:
@@ -32,6 +33,6 @@ Use the obsidian-second-brain skill. Execute `/research [topic]`:
 
 ---
 
-**AI-first rule:** Every note created or updated by this command MUST follow `references/ai-first-rules.md` - `## For future Claude` preamble, rich frontmatter (`type`, `date`, `tags`, `ai-first: true`, plus type-specific fields), recency markers per external claim, mandatory `[[wikilinks]]` for every person/project/concept referenced, sources preserved verbatim with URLs inline, and confidence levels where applicable. The vault is for future-Claude retrieval - not human reading.
+**AI-first rule:** Every note created or updated by this command MUST follow `references/ai-first-rules.md` - `## For future agent` preamble, rich frontmatter (`type`, `date`, `tags`, `ai-first: true`, plus type-specific fields), recency markers per external claim, mandatory `[[wikilinks]]` for every person/project/concept referenced, sources preserved verbatim with URLs inline, and confidence levels where applicable. If that path does not resolve from your working directory, search upward for it; if you still cannot read it, say so before writing rather than producing a note that silently skips the rule. The vault is for future agent retrieval - not human reading.
 
 **Anti-fabrication:** Search exhaustively before claiming any note, person, or file is absent - false absence is the most common failure mode - and never invent facts, entities, or dates (mark unknowns as `TBD`). See the anti-fabrication and search-completeness hard rules in `references/ai-first-rules.md`.

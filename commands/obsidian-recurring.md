@@ -4,6 +4,7 @@ category: vault
 triggers_en: ["recurring task", "monthly obligation", "remind me every month", "recurring payment", "track a recurring"]
 triggers_es: ["tarea recurrente", "obligación mensual", "recuérdamelo cada mes", "pago recurrente", "haz seguimiento de algo recurrente"]
 triggers_pt: ["tarefa recorrente", "obrigação mensal", "me lembre todo mês", "pagamento recorrente", "acompanhe algo recorrente"]
+triggers_zh: ["添加一个周期任务", "每个月提醒我", "记录这项定期付款", "跟踪一个重复事项", "记录一件要定期处理的事"]
 ---
 
 Use the obsidian-second-brain skill. Execute `/obsidian-recurring $ARGUMENTS`:
@@ -20,6 +21,6 @@ The argument states the obligation and its cadence (e.g. "pay social benefits, m
 
 ---
 
-**AI-first rule:** Every note created or updated by this command MUST follow `references/ai-first-rules.md` - `## For future Claude` preamble, rich frontmatter (`type`, `date`, `tags`, `ai-first: true`, plus type-specific fields), recency markers per external claim, mandatory `[[wikilinks]]` for every person/project/concept referenced, sources preserved verbatim with URLs inline, and confidence levels where applicable. The vault is for future-Claude retrieval - not human reading.
+**AI-first rule:** Every note created or updated by this command MUST follow `references/ai-first-rules.md` - `## For future agent` preamble, rich frontmatter (`type`, `date`, `tags`, `ai-first: true`, plus type-specific fields), recency markers per external claim, mandatory `[[wikilinks]]` for every person/project/concept referenced, sources preserved verbatim with URLs inline, and confidence levels where applicable. If that path does not resolve from your working directory, search upward for it; if you still cannot read it, say so before writing rather than producing a note that silently skips the rule. The vault is for future agent retrieval - not human reading.
 
 **Anti-fabrication:** Search exhaustively before claiming any note, person, or file is absent - false absence is the most common failure mode - and never invent facts, entities, or dates (mark unknowns as `TBD`). See the anti-fabrication and search-completeness hard rules in `references/ai-first-rules.md`.

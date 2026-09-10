@@ -4,6 +4,7 @@ category: meta
 triggers_en: ["visualize vault", "vault map", "canvas of vault", "show me the vault shape"]
 triggers_es: ["visualiza el vault", "mapa del vault", "canvas del vault", "muéstrame la forma de mi vault"]
 triggers_pt: ["visualize o vault", "mapa do vault", "canvas do vault", "mostre a forma do vault"]
+triggers_zh: ["把知识库可视化", "生成知识图谱画布", "画出我的笔记关系", "看看知识库的整体结构"]
 ---
 
 Use the obsidian-second-brain skill. Execute `/obsidian-visualize $ARGUMENTS`:
@@ -57,6 +58,6 @@ The user can open the `.canvas` file in Obsidian to visually explore their vault
 
 ---
 
-**AI-first rule:** Every note created or updated by this command MUST follow `references/ai-first-rules.md` - `## For future Claude` preamble, rich frontmatter (`type`, `date`, `tags`, `ai-first: true`, plus type-specific fields), recency markers per external claim, mandatory `[[wikilinks]]` for every person/project/concept referenced, sources preserved verbatim with URLs inline, and confidence levels where applicable. The vault is for future-Claude retrieval - not human reading.
+**AI-first rule:** Every note created or updated by this command MUST follow `references/ai-first-rules.md` - `## For future agent` preamble, rich frontmatter (`type`, `date`, `tags`, `ai-first: true`, plus type-specific fields), recency markers per external claim, mandatory `[[wikilinks]]` for every person/project/concept referenced, sources preserved verbatim with URLs inline, and confidence levels where applicable. If that path does not resolve from your working directory, search upward for it; if you still cannot read it, say so before writing rather than producing a note that silently skips the rule. The vault is for future agent retrieval - not human reading.
 
 **Anti-fabrication:** Search exhaustively before claiming any note, person, or file is absent - false absence is the most common failure mode - and never invent facts, entities, or dates (mark unknowns as `TBD`). See the anti-fabrication and search-completeness hard rules in `references/ai-first-rules.md`.

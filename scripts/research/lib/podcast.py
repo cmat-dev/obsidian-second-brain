@@ -8,8 +8,9 @@ Inputs accepted:
 
 Transcript priority:
   1. RSS <podcast:transcript> tag (free, fast)
-  2. Whisper API via OPENAI_API_KEY (paid, ~$0.006/min)
-  3. None - caller falls back to show-notes-only summary
+  2. Groq-hosted Whisper via GROQ_API_KEY (free tier; see lib/groq.py)
+  3. Whisper API via OPENAI_API_KEY (paid, ~$0.006/min)
+  4. None - caller falls back to show-notes-only summary
 """
 
 from __future__ import annotations
@@ -18,8 +19,9 @@ import os
 import re
 import sys
 import tempfile
+from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
 
 import requests
 
@@ -88,8 +90,54 @@ def is_url(s: str) -> bool:
         return False
 
 
-def resolve_apple_to_rss(apple_url: str) -> tuple[str, str | None]:
-    """Resolve Apple Podcasts URL to (feed_url, episode_id_str_or_None) via free iTunes Lookup API."""
+def safe_fetch_url(url: str) -> str | None:
+    """Reject a feed-supplied URL that points anywhere but the public internet.
+
+    The transcript and audio URLs come verbatim out of a third-party feed, and
+    the Apple/Spotify lookups resolve to a feedUrl chosen by whoever published
+    the show - so a normal-looking podcasts.apple.com link is enough to reach
+    this code. Without a check, a feed can point at http://localhost:11434, a
+    dev server on 127.0.0.1, or a cloud metadata endpoint, and the response body
+    is then summarized by an LLM and written into the user's vault.
+
+    Returns the reason it was rejected, or None when the URL is safe to fetch.
+    """
+    import ipaddress
+    import socket
+
+    try:
+        u = urlparse(url)
+    except Exception:
+        return "unparseable URL"
+    if u.scheme not in ("http", "https"):
+        return f"scheme {u.scheme!r} is not http/https"
+    host = u.hostname
+    if not host:
+        return "no host"
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError as e:
+        return f"cannot resolve {host}: {e}"
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            return f"{host} resolves to a non-public address ({ip})"
+    return None
+
+
+def resolve_apple_to_rss(apple_url: str) -> tuple[str, str | None, str | None]:
+    """Resolve Apple Podcasts URL to (feed_url, episode_id | None, episode_title | None).
+
+    Apple's ?i=<trackId> is an Apple-internal id that never appears in the RSS
+    feed's guids, so matching by id alone silently falls back to the most
+    recent episode. A second iTunes lookup with entity=podcastEpisode resolves
+    the trackId to its trackName, which _pick_entry can match against feed
+    entry titles.
+    """
     m = APPLE_RE.search(apple_url)
     if not m:
         raise ValueError(f"Not a recognizable Apple Podcasts URL: {apple_url}")
@@ -102,7 +150,23 @@ def resolve_apple_to_rss(apple_url: str) -> tuple[str, str | None]:
     feed_url = results[0].get("feedUrl")
     if not feed_url:
         raise ValueError(f"iTunes lookup did not return a feedUrl for show id {show_id}")
-    return feed_url, episode_id
+    episode_title: str | None = None
+    if episode_id:
+        try:
+            ep_resp = requests.get(
+                ITUNES_LOOKUP,
+                params={"id": show_id, "entity": "podcastEpisode", "limit": 200},
+                timeout=15,
+            )
+            ep_resp.raise_for_status()
+            for item in ep_resp.json().get("results", []):
+                if str(item.get("trackId", "")) == episode_id:
+                    episode_title = (item.get("trackName") or "").strip() or None
+                    break
+        except (OSError, ValueError):
+            pass  # title matching is best-effort; id fallback still applies.
+            # OSError covers requests.RequestException and raw socket errors.
+    return feed_url, episode_id, episode_title
 
 
 def parse_feed(
@@ -111,10 +175,10 @@ def parse_feed(
     """Parse an RSS feed and return episode metadata + audio URL + show-notes + transcript-tag-url."""
     try:
         import feedparser
-    except ImportError:
+    except ImportError as e:
         raise RuntimeError(
             "feedparser is required. Install with: uv sync (or pip install feedparser)"
-        )
+        ) from e
     parsed = feedparser.parse(feed_url)
     if parsed.bozo and not parsed.entries:
         raise ValueError(f"Could not parse feed at {feed_url}: {parsed.bozo_exception}")
@@ -225,8 +289,21 @@ def _strip_html(s: str) -> str:
 
 def fetch_transcript_tag(transcript_url: str) -> str | None:
     """Download a <podcast:transcript> resource. Supports text/plain, text/html, text/srt, text/vtt, JSON."""
+    bad = safe_fetch_url(transcript_url)
+    if bad:
+        print(f"[podcast transcript-tag refused: {bad}]", file=sys.stderr)
+        return None
     try:
-        r = requests.get(transcript_url, timeout=30)
+        # allow_redirects=False: an allowed host must not be able to bounce the
+        # request inward with a 302 after passing the check above.
+        r = requests.get(transcript_url, timeout=30, allow_redirects=False)
+        if r.is_redirect or r.is_permanent_redirect:
+            nxt = r.headers.get("Location", "")
+            bad = safe_fetch_url(nxt) if nxt else "empty redirect target"
+            if bad:
+                print(f"[podcast transcript-tag refused redirect: {bad}]", file=sys.stderr)
+                return None
+            r = requests.get(nxt, timeout=30, allow_redirects=False)
         r.raise_for_status()
     except Exception as e:
         print(f"[podcast transcript-tag fetch failed: {type(e).__name__}: {e}]", file=sys.stderr)
@@ -245,10 +322,11 @@ def fetch_transcript_tag(transcript_url: str) -> str | None:
 
 
 def _parse_json_transcript(body: str) -> str | None:
-    """Parse a JSON transcript body. Currently supports the Podcast Index
-    `{"segments": [{"body": "..."}]}` schema. Other schemas (Deepgram,
-    AssemblyAI, custom) are not supported and produce a stderr warning so
-    the caller knows a JSON transcript was found but unreadable.
+    """Parse a JSON transcript body. Supports the Podcast Index
+    `{"segments": [{"body": "..."}]}` schema and the Whisper-derived
+    `{"segments": [{"text": "..."}]}` schema that several hosts ship
+    (flightcast, Deepgram, AssemblyAI). Anything else produces a stderr
+    warning so the caller knows a JSON transcript was found but unreadable.
     """
     import json
     try:
@@ -258,23 +336,26 @@ def _parse_json_transcript(body: str) -> str | None:
         return None
     if isinstance(data, dict) and "segments" in data:
         segments = data["segments"]
-        joined = " ".join(s.get("body", "") for s in segments if s.get("body")).strip()
-        if joined:
-            return joined
+        # Podcast Index names the per-segment string `body`; Whisper-derived
+        # exports name it `text`. They are otherwise the same shape, so accept
+        # either rather than falling through to a show-notes-only summary.
+        for field in ("body", "text"):
+            joined = " ".join(s.get(field, "") for s in segments if s.get(field)).strip()
+            if joined:
+                return joined
         sample_keys: list[str] = []
         if isinstance(segments, list) and segments and isinstance(segments[0], dict):
             sample_keys = list(segments[0].keys())[:6]
         print(
-            f"[podcast transcript-tag JSON: `segments` present but no `body` field "
-            f"(segment keys: {sample_keys}). Likely Deepgram/AssemblyAI/custom schema. "
-            f"Only Podcast Index `segments[].body` is supported in v1.]",
+            f"[podcast transcript-tag JSON: `segments` present but no `body` or `text` field "
+            f"(segment keys: {sample_keys}). Unrecognised schema.]",
             file=sys.stderr,
         )
         return None
     keys = list(data.keys())[:5] if isinstance(data, dict) else type(data).__name__
     print(
         f"[podcast transcript-tag JSON: unsupported schema (top-level keys/type: {keys}). "
-        f"Only Podcast Index `segments[].body` is supported in v1.]",
+        f"Only `segments[].body` and `segments[].text` are supported.]",
         file=sys.stderr,
     )
     return None
@@ -306,6 +387,10 @@ def transcribe_via_whisper(audio_url: str, max_bytes: int = 25 * 1024 * 1024) ->
         print("[podcast whisper: openai package not installed]", file=sys.stderr)
         return None
 
+    bad = safe_fetch_url(audio_url)
+    if bad:
+        print(f"[podcast whisper refused: {bad}]", file=sys.stderr)
+        return None
     try:
         with requests.get(audio_url, stream=True, timeout=60) as resp:
             resp.raise_for_status()
@@ -324,7 +409,7 @@ def transcribe_via_whisper(audio_url: str, max_bytes: int = 25 * 1024 * 1024) ->
                     bytes_written += len(chunk)
                     if bytes_written > max_bytes:
                         tmp.close()
-                        os.unlink(tmp.name)
+                        Path(tmp.name).unlink()
                         print(
                             f"[podcast whisper: audio exceeds {max_bytes // (1024*1024)} MB while streaming]",
                             file=sys.stderr,
@@ -338,7 +423,7 @@ def transcribe_via_whisper(audio_url: str, max_bytes: int = 25 * 1024 * 1024) ->
 
     try:
         client = OpenAI(api_key=key)
-        with open(tmp_path, "rb") as f:
+        with Path(tmp_path).open("rb") as f:
             result = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=f,
@@ -357,7 +442,7 @@ def transcribe_via_whisper(audio_url: str, max_bytes: int = 25 * 1024 * 1024) ->
         return None
     finally:
         try:
-            os.unlink(tmp_path)
+            Path(tmp_path).unlink()
         except OSError:
             pass
 
@@ -377,8 +462,8 @@ def resolve_input(user_input: str) -> dict[str, Any]:
         raise ValueError("Input must be a URL (Apple Podcasts URL or RSS feed URL)")
 
     if is_apple_url(s):
-        feed_url, episode_id = resolve_apple_to_rss(s)
-        episode = parse_feed(feed_url, episode_id=episode_id)
+        feed_url, episode_id, episode_title = resolve_apple_to_rss(s)
+        episode = parse_feed(feed_url, episode_id=episode_id, episode_title=episode_title)
         episode["source_url"] = s
         episode["feed_url"] = feed_url
         return episode

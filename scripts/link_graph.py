@@ -23,6 +23,10 @@ Output: JSON with nodes, edges, and stats (top hubs, orphans, dangling links).
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parent))
 import argparse
 import json
 import re
@@ -32,8 +36,9 @@ from pathlib import Path
 
 # Shared with the health check so the two tools cannot drift apart again.
 from vault_health import index_vault_files
+from vault_scan import BASE_EXCLUDE_DIRS  # noqa: E402
 
-SKIP_DIRS = {".obsidian", ".git", ".trash", "_trash", ".claude", "_export", "templates", "node_modules"}
+SKIP_DIRS = frozenset(d.lower() for d in BASE_EXCLUDE_DIRS)  # see scripts/vault_scan.py
 
 
 def _skipped(parts) -> bool:
@@ -41,7 +46,10 @@ def _skipped(parts) -> bool:
 
 LINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 CODE_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
-INLINE_CODE_RE = re.compile(r"`[^`]*`")
+# Newline-bounded, matching vault_health.py:441. Without the \n exclusion one
+# stray backtick in prose swallows every line up to the next one, so real
+# [[links]] disappear from the graph and their targets look like orphans.
+INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
 TYPE_RE = re.compile(r"(?m)^type:\s*[\"']?([A-Za-z0-9_-]+)")
 ALIAS_BLOCK_RE = re.compile(r"(?ms)^aliases:\s*\n((?:\s*-\s*.+\n?)+)")
 ALIAS_INLINE_RE = re.compile(r"(?m)^aliases:\s*\[(.+)\]")
@@ -69,8 +77,12 @@ EDGE_INVERSE = {
 }
 # Asymmetric ordering types: A->B and B->A of the SAME type is a logical
 # contradiction (A supersedes B while B supersedes A), not just a missing inverse.
-ASYMMETRIC_TYPES = {"supersedes", "superseded_by", "depends_on", "required_by",
-                    "caused", "caused_by", "decided_by", "decides"}
+# Derived, not hand-maintained. This is exactly the set of types whose inverse
+# is not itself, so listing it separately meant a contributor adding a new pair
+# to EDGE_INVERSE and forgetting this line would make lint_graph silently stop
+# detecting missing reciprocals for that type - no error, just a class of
+# finding quietly gone.
+ASYMMETRIC_TYPES = frozenset(t for t, inv in EDGE_INVERSE.items() if inv != t)
 LEGACY_EDGE_KEYS = {"supersedes", "superseded_by"}
 _REL_KEY_RE = re.compile(r"^(\s*)([A-Za-z_][A-Za-z0-9_]*):(.*)$")
 _WIKILINK_IN_RE = re.compile(r"\[\[([^\]|#]+)")
@@ -398,6 +410,13 @@ def main(argv: list[str]) -> int:
         return 2
     graph = build_graph(vault, args.scope)
     out = lint_graph(graph) if args.lint else graph
+    # Force UTF-8 stdout. On Windows a pipe defaults to cp1252, and a decomposed
+    # title (u + U+0308, the macOS filename form) has no cp1252 form, so the
+    # ensure_ascii=False dump below raised UnicodeEncodeError there.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
     print(json.dumps(out, ensure_ascii=False, indent=2))
     return 0
 

@@ -2,8 +2,9 @@
 description: Surface unnamed patterns from your recent notes - recurring themes, hidden connections, and conclusions you haven't explicitly stated
 category: thinking
 triggers_en: ["find patterns", "what is emerging", "surface themes", "unnamed patterns"]
-triggers_es: ["busca patrones", "qué está emergiendo", "saca a la luz los temas recurrentes", "patrones que no he nombrado"]
+triggers_es: ["busca patrones", "qué está emergiendo", "patrones que no he nombrado", "qué patrones ves aquí", "qué se repite en mis notas"]
 triggers_pt: ["encontre padrões", "o que está emergindo", "mostre temas", "padrões sem nome"]
+triggers_zh: ["从最近的笔记里找规律", "最近有什么趋势正在浮现", "找出我还没说清的模式", "看看反复出现的主题"]
 ---
 
 Use the obsidian-second-brain skill. Execute `/obsidian-emerge $ARGUMENTS`:
@@ -30,6 +31,6 @@ The goal is insight the user cannot see themselves. Do not restate what they alr
 
 ---
 
-**AI-first rule:** Every note created or updated by this command MUST follow `references/ai-first-rules.md` - `## For future Claude` preamble, rich frontmatter (`type`, `date`, `tags`, `ai-first: true`, plus type-specific fields), recency markers per external claim, mandatory `[[wikilinks]]` for every person/project/concept referenced, sources preserved verbatim with URLs inline, and confidence levels where applicable. The vault is for future-Claude retrieval - not human reading.
+**AI-first rule:** Every note created or updated by this command MUST follow `references/ai-first-rules.md` - `## For future agent` preamble, rich frontmatter (`type`, `date`, `tags`, `ai-first: true`, plus type-specific fields), recency markers per external claim, mandatory `[[wikilinks]]` for every person/project/concept referenced, sources preserved verbatim with URLs inline, and confidence levels where applicable. If that path does not resolve from your working directory, search upward for it; if you still cannot read it, say so before writing rather than producing a note that silently skips the rule. The vault is for future agent retrieval - not human reading.
 
 **Anti-fabrication:** Search exhaustively before claiming any note, person, or file is absent - false absence is the most common failure mode - and never invent facts, entities, or dates (mark unknowns as `TBD`). See the anti-fabrication and search-completeness hard rules in `references/ai-first-rules.md`.

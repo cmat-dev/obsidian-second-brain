@@ -3,7 +3,11 @@
 set -e
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-COMMANDS_DIR="$HOME/.claude/commands"
+# Home for config and Claude Code state (OSB_HOME, OSB_WIN): USERPROFILE on
+# Windows shells, HOME elsewhere. See scripts/platform-home.sh.
+. "$SKILL_DIR/scripts/platform-home.sh"
+osb_platform_home
+COMMANDS_DIR="$OSB_HOME/.claude/commands"
 
 # Pull latest
 if [ -d "$SKILL_DIR/.git" ]; then

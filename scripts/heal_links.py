@@ -39,7 +39,7 @@ from pathlib import Path
 
 # reuse the EXACT detection the health check uses, so our count == its count
 from note_io import read_exact, write_exact
-from vault_health import load_vault, check_wanted_notes, replace_outside_code
+from vault_health import check_wanted_notes, load_vault, load_vault_config, replace_outside_code
 
 DECORATION = re.compile(r"[#|].*$")          # a #heading anchor or |display alias
 LINK_IN_MSG = re.compile(r"\[\[(.+?)\]\] - wanted by ")
@@ -178,8 +178,13 @@ def _collect_safe(wanted, name_to_rel, stems, slug_to_rels):
 
 
 def dry_run(vault):
-    notes = load_vault(vault)
-    wanted = check_wanted_notes(notes, vault)
+    # Honor .vault-config.json the way vault_health does. This tool REWRITES
+    # notes, so scanning a wider set than the read-only health check means
+    # rewriting files the user explicitly excluded - and it breaks this
+    # module's promise that its count equals the health check's count.
+    excludes = load_vault_config(vault)
+    notes = load_vault(vault, excludes)
+    wanted = check_wanted_notes(notes, vault, excludes)
     per_file, buckets = _collect_safe(wanted, *index_notes(notes))
     safe = sum(len(v) for v in per_file.values())
     print(f"\nWanted links: {sum(buckets.values())}")
@@ -192,8 +197,9 @@ def dry_run(vault):
 
 def apply_batch(vault):
     print("\nBatch heal: one pass, all unambiguous fixes, single recount.\n")
-    notes = load_vault(vault)
-    wanted = check_wanted_notes(notes, vault)
+    excludes = load_vault_config(vault)
+    notes = load_vault(vault, excludes)
+    wanted = check_wanted_notes(notes, vault, excludes)
     before = len(wanted)
     per_file, buckets = _collect_safe(wanted, *index_notes(notes))
 
@@ -214,7 +220,8 @@ def apply_batch(vault):
             applied += changed
             files_touched += 1
 
-    after = len(check_wanted_notes(load_vault(vault), vault))
+    _ex = load_vault_config(vault)
+    after = len(check_wanted_notes(load_vault(vault, _ex), vault, _ex))
     print(f"  wanted links before:        {before}")
     print(f"  safe auto-fixes applied:    {applied} (across {files_touched} files)")
     if skipped:
@@ -234,13 +241,36 @@ def find_next_safe_fix(per_file, skip_rels=frozenset()):
     return None
 
 
+def _reparse_one(notes, vault, rel, excludes):
+    """Replace one note's entry from disk, leaving the rest of the scan intact.
+
+    load_vault builds the same per-note dict for every file; running it again to
+    learn about a single rewritten file is the expensive part of the loop.
+    """
+    fresh = load_vault(vault, excludes, only=rel)
+    if rel in fresh:
+        notes[rel] = fresh[rel]
+    else:
+        # The rewrite made the note unreadable or it vanished; drop it rather
+        # than leaving a stale entry that would mask the change.
+        notes.pop(rel, None)
+    return notes
+
+
 def apply_loop(vault, max_fixes):
     print(f"\nStarting the loop. Bounded to {max_fixes} safe fixes. Watch the count.\n")
     fixed = 0
     skip_rels = set()
+    # Scan ONCE. The loop previously called load_vault + check_wanted_notes at
+    # the top of every iteration AND again after each write - two full scans per
+    # fix. Measured on a ~2,900-note vault: load_vault 1.94s, check_wanted_notes
+    # 0.78s, so ~5.4s per fix, roughly 80s to land 15 one-line edits. Only one
+    # file changes per iteration, so the rest of the scan is re-derived for
+    # nothing. apply_batch and dry_run already do this correctly with one pass.
+    excludes = load_vault_config(vault)
+    notes = load_vault(vault, excludes)
     while fixed < max_fixes:
-        notes = load_vault(vault)
-        wanted = check_wanted_notes(notes, vault)
+        wanted = check_wanted_notes(notes, vault, excludes)
         before = len(wanted)
         per_file, _ = _collect_safe(wanted, *index_notes(notes))
 
@@ -256,10 +286,22 @@ def apply_loop(vault, max_fixes):
             print(f"  SKIPPED (not valid UTF-8, left untouched): {rel}")
             skip_rels.add(rel)
             continue
-        text, _ = _rewrite(text, link, new_stem)
+        text, n = _rewrite(text, link, new_stem)
+        if n == 0:
+            # vault_health's LINK_RE strips #anchors and |aliases, so a link
+            # reported as [[X]] can be [[X#Setup]] on disk and the exact-string
+            # rewrite matches nothing. Writing anyway produced identical bytes,
+            # counted a fix that never happened, then tripped the no-progress
+            # guard and abandoned every remaining safe fix in the run.
+            print(f"  SKIPPED (no literal [[{link}]] outside code in {rel})")
+            skip_rels.add(rel)
+            continue
         write_exact(path, text)
 
-        after = len(check_wanted_notes(load_vault(vault), vault))
+        # Re-parse only the file that changed and patch it into the in-memory
+        # scan, instead of re-reading the whole vault to learn one note's links.
+        notes = _reparse_one(notes, vault, rel, excludes)
+        after = len(check_wanted_notes(notes, vault, excludes))
         fixed += 1
         print(f"  fix {fixed:>2}: [[{link}]]")
         print(f"           -> [[{new_stem}|{link}]]   in {rel}")

@@ -33,8 +33,8 @@ import os
 import re
 import sys
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
@@ -56,8 +56,9 @@ EXCLUDE_PREFIXES = tuple(
 # index and the lexical scan can never drift into different universes
 # (stress-test fix 10/24).
 import sys as _sys
+
 _sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "integrations" / "obsidian-mcp-server"))
-from vault_ops import _SKIP_DIRS as SKIP_DIRS  # noqa: E402
+
 INDEX_FILE = ".obsidian-semantic-index.json"  # written at vault root
 # Embedding models have a token limit (typically ~512 tokens). Long notes
 # must be split into safe chunks and averaged, or the model 500s. ~1200 chars sits
@@ -238,7 +239,9 @@ def cosine(a: list[float], b: list[float]) -> float:
     """Cosine similarity in [-1, 1]; how close two meaning-coordinates point."""
     if not a or not b or len(a) != len(b):
         return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
+    # strict=True: a and b are already verified equal-length above, so this
+    # never raises here - it documents the invariant for future edits (#164).
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))
     if na == 0 or nb == 0:
@@ -258,13 +261,8 @@ def _excluded(rel: str) -> bool:
 # Index build / load (cached, incremental)
 # --------------------------------------------------------------------------- #
 def _iter_notes(vault: Path):
-    for md in sorted(vault.rglob("*.md")):
-        parts = md.relative_to(vault).parts
-        if any(pt.lower() in SKIP_DIRS or pt.lower().endswith("templates") for pt in parts):
-            continue
-        if md.name.endswith(".excalidraw.md"):
-            continue  # drawings are raw JSON, not prose - they bloat and fail embedding
-        yield md
+    from vault_ops import _iter_notes as iter_canonical_notes
+    yield from sorted(iter_canonical_notes(vault))
 
 
 def build_index(vault: Path, verbose: bool = True) -> dict:

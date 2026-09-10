@@ -4,7 +4,7 @@ Pure stdlib, no MCP dependency, so the logic is unit-testable on its own. The
 MCP wiring in `server.py` is a thin layer over these functions.
 
 Every write follows the AI-first rule (references/ai-first-rules.md): frontmatter
-with type/date/tags/ai-first, a `## For future Claude` preamble, and a
+with type/date/tags/ai-first, a `## For future agent` preamble, and a
 `source: mcp` marker so notes added through the connector are distinguishable.
 """
 
@@ -14,8 +14,12 @@ import json
 import math
 import os
 import re
+import shlex
+import subprocess
 import sys
+import unicodedata
 import urllib.request
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional
@@ -31,8 +35,18 @@ _NOTES_DIR = "Inbox"
 # Canonical skip set for the WHOLE search stack: semantic_search.py imports it
 # and retrieval_eval.py consults it, so lexical scan, semantic index, and eval
 # all search the same universe (stress-test fix 10/24).
+# Mirrors scripts/vault_scan.BASE_EXCLUDE_DIRS. Kept as a literal because this
+# module ships standalone in the MCP server and must not import from scripts/.
+# tests/test_exclude_policy.py pins the two together so they cannot drift again.
 _SKIP_DIRS = {".obsidian", ".git", ".trash", "_trash", ".claude", "_export",
-              "templates", "node_modules"}
+              "templates", "node_modules", ".agents", ".codex", ".gemini",
+              ".opencode", "__pycache__"}
+
+# Directories no write tool may touch. `raw/` holds original sources the skill
+# treats as immutable, and `templates` needs to match the conventional capital-T
+# `Templates/` a bootstrapped vault actually creates - the old guard compared a
+# lowercase set against un-lowercased path parts, so it never matched.
+_PROTECTED_WRITE_DIRS = _SKIP_DIRS | {"raw"}
 
 # Operational logs and immutable raw sources are rarely the *answer* to a query:
 # they are long and term-dense, so without a penalty they dominate term-frequency
@@ -161,7 +175,7 @@ def _freshness_rerank(results, vault: Path, current_intent: bool):
                 superseded_targets.add(PurePosixPath(target.strip()).stem.lower())
 
     rescored = []
-    for i, (r, head) in enumerate(zip(results, heads)):
+    for i, (r, head) in enumerate(zip(results, heads, strict=True)):
         weight = 1.0
         sm = _STATUS_RE.search(head)
         if sm and sm.group(1).lower() in _STALE_STATUSES:
@@ -232,6 +246,16 @@ _RRF_SEMANTIC_WEIGHT = float(os.environ.get("OBSIDIAN_RRF_SEMANTIC_WEIGHT") or "
 # entries vote demoted semantic answers. Lexical votes are capped to its
 # strongest few; semantic keeps the full fusion depth.
 _FUSE_LEX_DEPTH = int(os.environ.get("OBSIDIAN_RRF_LEX_DEPTH") or "25")
+# The semantic index is built on demand and never invalidates itself, so a note
+# written after the last build is invisible to the semantic arm. On English
+# queries the lexical arm covers for that; on a query in another language it
+# contributes nothing (measured: on the RU/ES case set every hit came from the
+# semantic arm, lexical rank was absent or in the hundreds), so an unindexed
+# note is simply unfindable. Found at 29% uncovered on a real vault, silently.
+# Warned, never auto-rebuilt: rebuilding mid-search would stall the query for
+# minutes, and the user may not want an embedding pass running unprompted.
+_INDEX_STALE_WARN_PCT = float(os.environ.get("OBSIDIAN_INDEX_STALE_WARN_PCT") or "5.0")
+_STALE_WARNED_FOR: Optional[str] = None
 
 # Bounds keep search fast and reads safe. The scan cap exists to stop a runaway
 # walk on pathological trees, NOT to slice a real vault: 10k covers personal
@@ -244,10 +268,27 @@ _MAX_FILE_BYTES = 200_000
 _SNIPPET_CHARS = 320
 _READ_CAP = 20_000
 
+# Platform-neutral preamble name. Legacy notes remain valid: a vault is durable
+# memory, so changing the preferred label must not make years of Claude-authored
+# notes fail validation when Codex, Gemini, Hermes, or another agent reads them.
+_PREAMBLE_HEADING = "For future agent"
+# Two accepted spellings (ai-first-rules.md rule 2): the heading every command
+# writes, and the Obsidian callout form `> [!info]- For future agent` (any
+# callout type, folded or not) a vault may prefer so a human sees the note
+# content first (#237). The write-time hook and vault_health match the same two.
+_PREAMBLE_RE = re.compile(
+    r"(?mi)^(?:##[ \t]+|>[ \t]*\[![A-Za-z][\w-]*\][-+]?[ \t]+)"
+    r"For future (?:agent|AI|Claude|Codex)[ \t]*$"
+)
+_VALIDATION_EXEMPT_ROOT_FILES = {
+    "_CLAUDE.md", "AGENTS.md", "Home.md", "index.md", "log.md",
+    "catchup.md", "INSTALL.md",
+}
+
 
 # Documented config home (architecture.md, .env.example, CONTRIBUTING.md). The
 # research toolkit loads it via python-dotenv, but this module is pure stdlib and
-# the MCP server runs under `uv run --with mcp` (no python-dotenv installed), so
+# the MCP server runs under `uv run --no-project --with 'mcp<2'` (no python-dotenv installed), so
 # we parse the one key we need by hand. Override the path in tests via
 # OBSIDIAN_ENV_FILE. (Fixes #160 - same root cause as #124, different code path.)
 _ENV_FILE = Path.home() / ".config" / "obsidian-second-brain" / ".env"
@@ -291,10 +332,41 @@ def resolve_vault() -> Path:
 def _cosine(a: List[float], b: List[float]) -> float:
     if not a or not b or len(a) != len(b):
         return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
+    # strict=True: a and b are already verified equal-length above, so this
+    # never raises. It documents that invariant instead of letting a future
+    # edit that removes the length check silently reintroduce a truncated,
+    # wrong-but-plausible-looking dot product (see #164).
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))
     return dot / (na * nb) if na and nb else 0.0
+
+
+def _unit(v: List[float]) -> Optional[List[float]]:
+    """Return v scaled to length 1, or None when it has no length."""
+    n = math.sqrt(sum(x * x for x in v))
+    if not n:
+        return None
+    return [x / n for x in v]
+
+
+def _dot(a: List[float], b: List[float]) -> float:
+    """Cosine for two already-normalized vectors: just the dot product.
+
+    _cosine recomputed BOTH norms on every call. Profiled on a ~2,900-note vault
+    it was called 6,455 times for a single query and recomputed the query's own
+    norm - invariant across the entire loop - every one of those times. Chunk
+    norms were also recomputed per query although they only change when the
+    index is rebuilt. Normalizing the query once and caching normalized chunk
+    vectors alongside the loaded index removes both.
+    """
+    if len(a) != len(b):
+        return 0.0
+    # strict=True: see _cosine above - this is defence in depth, not a live
+    # bug fix, since the length check just above already guarantees a and b
+    # match. It's called in a tight loop over every chunk in the vault, so
+    # keep it a documented invariant rather than a silent truncation risk.
+    return sum(x * y for x, y in zip(a, b, strict=True))
 
 
 def _embed_query(text: str, model: Optional[str] = None) -> Optional[List[float]]:
@@ -329,19 +401,142 @@ def _embed_query(text: str, model: Optional[str] = None) -> Optional[List[float]
 # so an index rebuild is picked up on the next call (stress-test fix 13/24).
 _INDEX_CACHE: Dict[str, Any] = {}
 
+# ── Lexical scan cache ──────────────────────────────────────────────────────
+# Every search re-read, re-decoded and re-lowercased every note, then recomputed
+# the per-note values that do not depend on the query at all: length norm, type
+# weight, stale-status fade and age. Measured on a ~2,900-note vault, a lexical
+# search is 0.62s of which roughly 0.2s is file I/O - so this is a useful win
+# rather than a transformational one, and worth saying plainly. It matters most
+# where searches run back to back: the eval harness does one per case, and
+# /obsidian-find is interactive.
+#
+# Deliberately NOT an inverted term index. Scoring uses `low.count(term)`, which
+# is substring matching - "run" matches "running" - so tokenizing would change
+# results, and the retrieval numbers in scripts/eval/BASELINE.md are the contract.
+# This caches the inputs to the existing scorer and changes no ranking.
+#
+# Keyed on (mtime_ns, size) so an edited note is re-read on the next search.
+# Bounded by total cached characters, evicting oldest-first, so a very large
+# vault degrades to the previous behaviour instead of growing without limit.
+_SCAN_CACHE: "OrderedDict[str, Any]" = OrderedDict()
+_SCAN_CACHE_MAX_CHARS = int(os.environ.get("OBSIDIAN_SCAN_CACHE_CHARS") or "40000000")
+_scan_cache_chars = 0
+
+
+def _scan_entry(md: Path, vault: Path):
+    """Per-note scan inputs, cached until the file changes.
+
+    Returns (lowercased_text, title_low, length_norm, static_weight) or None when
+    the file is unreadable. `static_weight` folds together every query-independent
+    multiplier: de-weight prefix, type weight and stale-status fade.
+    """
+    global _scan_cache_chars
+    key = str(md)
+    try:
+        st = md.stat()
+        stamp = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+    hit = _SCAN_CACHE.get(key)
+    if hit is not None and hit[0] == stamp:
+        _SCAN_CACHE.move_to_end(key)
+        return hit[1]
+
+    text = _read_safe(md, limit=_MAX_FILE_BYTES)
+    if not text:
+        return None
+    low = text.lower()
+    rel = md.relative_to(vault).as_posix()
+    weight = 1.0
+    if rel in _SEARCH_DEWEIGHT_FILES or rel.startswith(_SEARCH_DEWEIGHT_PREFIXES):
+        weight *= _SEARCH_DEWEIGHT_FACTOR
+    else:
+        weight *= _type_weight(rel, text)
+    sm = _STATUS_RE.search(text[:400])
+    if sm and sm.group(1).lower() in _STALE_STATUSES:
+        weight *= _STATUS_FADE
+    entry = (low, md.stem.lower(), 1.0 + math.log1p(len(low) / 1000.0), weight,
+             _note_age_days(text, md), text)
+
+    if hit is not None:
+        _scan_cache_chars -= len(hit[1][0])
+    _SCAN_CACHE[key] = (stamp, entry)
+    _SCAN_CACHE.move_to_end(key)
+    _scan_cache_chars += len(low)
+    while _scan_cache_chars > _SCAN_CACHE_MAX_CHARS and len(_SCAN_CACHE) > 1:
+        _, old = _SCAN_CACHE.popitem(last=False)
+        _scan_cache_chars -= len(old[1][0])
+    return entry
+
 
 def _load_index_cached(index_path: Path) -> dict:
     st = index_path.stat()
     key = (str(index_path), st.st_mtime_ns, st.st_size)
     if _INDEX_CACHE.get("key") != key:
         _INDEX_CACHE["key"] = key
-        _INDEX_CACHE["index"] = json.loads(index_path.read_text(encoding="utf-8"))
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+        # Pre-normalize every chunk vector once per index load instead of once
+        # per query. Stored under a private key so a rebuilt index cannot serve
+        # stale norms - the cache key already covers mtime and size.
+        for n in (index.get("notes") or {}).values():
+            vecs = n.get("vecs") or ([n["vec"]] if n.get("vec") else [])
+            n["_unit"] = [u for u in (_unit(v) for v in vecs) if u]
+        _INDEX_CACHE["index"] = index
     return _INDEX_CACHE["index"]
+
+
+def index_coverage(vault: Path) -> Dict[str, Any]:
+    """How much of the vault the semantic index actually covers.
+
+    Shared by search (which warns) and vault_health (which reports), so the two
+    can never disagree about whether an index is current.
+    """
+    index_path = vault / _SEMANTIC_INDEX_FILE
+    if not index_path.exists():
+        return {"index": False, "scanned": 0, "indexed": 0, "missing": 0, "pct_missing": 0.0}
+    try:
+        notes = (_load_index_cached(index_path).get("notes") or {})
+    except Exception:
+        return {"index": False, "scanned": 0, "indexed": 0, "missing": 0, "pct_missing": 0.0}
+    scanned = {md.relative_to(vault).as_posix() for md in _iter_notes(vault)}
+    missing = len(scanned - set(notes))
+    return {
+        "index": True,
+        "scanned": len(scanned),
+        "indexed": len(notes),
+        "missing": missing,
+        "pct_missing": (100.0 * missing / len(scanned)) if scanned else 0.0,
+    }
+
+
+def _warn_if_index_stale(vault: Path, scanned: List[str], notes: Dict[str, Any]) -> None:
+    """Warn once per index version, using the paths search already walked.
+
+    Reuses the search loop's own scan rather than re-walking the vault, so the
+    check costs a set difference and cannot slow a query down.
+    """
+    global _STALE_WARNED_FOR
+    key = str(_INDEX_CACHE.get("key"))
+    if _STALE_WARNED_FOR == key or not scanned:
+        return
+    _STALE_WARNED_FOR = key
+    missing = len(set(scanned) - set(notes))
+    pct = 100.0 * missing / len(scanned)
+    if pct < _INDEX_STALE_WARN_PCT:
+        return
+    print(
+        f"warning: the semantic index covers {len(notes)} of {len(scanned)} notes; "
+        f"{missing} ({pct:.0f}%) are missing and will not be found by meaning, only "
+        f"by literal word match. Rebuild: uv run python scripts/eval/semantic_search.py "
+        f"--path \"<vault>\" --build (incremental - only new and changed notes re-embed).",
+        file=sys.stderr,
+    )
 
 
 def _semantic_fuse(
     query: str, lexical: List[Dict[str, Any]], vault: Path, limit: int,
-    enabled: Optional[bool] = None,
+    enabled: Optional[bool] = None, scanned: Optional[List[str]] = None,
 ) -> Optional[List[Dict[str, Any]]]:
     """Fuse lexical results with local semantic ranking via RRF. Returns None (so the
     caller uses pure lexical) whenever semantic is unavailable or anything fails.
@@ -356,10 +551,16 @@ def _semantic_fuse(
         notes = index.get("notes") or {}
         if not notes:
             return None
+        _warn_if_index_stale(vault, scanned or [], notes)
         # The query MUST be embedded with the model the index was built with -
         # vectors from different models live in different spaces (fix 16/24).
         qvec = _embed_query(query, model=index.get("model") or _EMBED_MODEL)
         if not qvec:
+            return None
+        # Normalize the query ONCE. It is invariant across the whole scoring
+        # loop, and recomputing its norm per comparison was a third of the work.
+        qunit = _unit(qvec)
+        if not qunit:
             return None
         # Best-chunk scoring (fix 13/24): a note is as relevant as its most
         # relevant section, not the average of everything it contains.
@@ -369,12 +570,14 @@ def _semantic_fuse(
             deleted log notes outright, recall halved - vs additive nudges, vs a
             70/30 max+mean blend): fix 13/24, all variants scored on both case
             sets before shipping."""
-            vecs = n.get("vecs") or ([n["vec"]] if n.get("vec") else [])
-            return max((_cosine(qvec, v) for v in vecs), default=0.0)
+            units = n.get("_unit") or []
+            return max((_dot(qunit, v) for v in units), default=0.0)
 
+        allowed_paths = set(scanned) if scanned is not None else None
         sem = sorted(
             ({"path": rel, "title": n.get("title", rel), "score": _note_score(rel, n)}
-             for rel, n in notes.items() if n.get("vecs") or n.get("vec")),
+             for rel, n in notes.items() if n.get("_unit")
+             and (allowed_paths is None or rel in allowed_paths)),
             key=lambda r: r["score"], reverse=True,
         )[:_FUSE_DEPTH]
         lex_rank = {r["path"]: i for i, r in enumerate(lexical[:min(_FUSE_DEPTH, _FUSE_LEX_DEPTH)])}
@@ -423,26 +626,30 @@ def search(query: str, *, limit: int = 6, semantic: Optional[bool] = None) -> Li
         semantic = False
     limit = max(1, min(int(limit), 20))
     scored: List[Dict[str, Any]] = []
+    # Every note the scan reached, scoring or not. The staleness check diffs
+    # this against the index for free rather than walking the vault a second time.
+    seen: List[str] = []
     truncated = False
     for i, md in enumerate(_iter_notes(vault)):
         if i >= _MAX_FILES_SCANNED:
             truncated = True
             break
-        text = _read_safe(md, limit=_MAX_FILE_BYTES)
-        if not text:
+        seen.append(md.relative_to(vault).as_posix())
+        entry = _scan_entry(md, vault)
+        if entry is None:
             continue
-        low = text.lower()
-        title_low = md.stem.lower()
+        low, title_low, length_norm, static_weight, age_days, text = entry
         # Sublinear term frequency + length normalization (BM25-style): a note that
         # repeats a term 50 times in passing should not outrank a short note that has
         # the term in its title. log1p saturates repeated mentions; dividing the body
         # contribution by a length factor stops long notes winning on sheer volume.
         # Title matches stay a strong, length-independent signal.
-        length_norm = 1.0 + math.log1p(len(low) / 1000.0)
         title_score = 0.0
         body_score = 0.0
         for t in terms:
-            tc = title_low.count(t)
+            # ASCII title terms are words: "boot" must not give "Booth" the
+            # strong title bonus. Preserve CJK and non-ASCII substring behavior.
+            tc = len(re.findall(r"(?<!\w)" + re.escape(t) + r"(?!\w)", title_low)) if t.isascii() else title_low.count(t)
             if tc:
                 title_score += 5.0 * (1.0 + math.log1p(tc))
             bc = low.count(t)
@@ -453,14 +660,10 @@ def search(query: str, *, limit: int = 6, semantic: Optional[bool] = None) -> Li
         )
         if score:
             rel = md.relative_to(vault).as_posix()
-            if rel in _SEARCH_DEWEIGHT_FILES or rel.startswith(_SEARCH_DEWEIGHT_PREFIXES):
-                score *= _SEARCH_DEWEIGHT_FACTOR
-            else:
-                score *= _type_weight(rel, text)
-            sm = _STATUS_RE.search(text[:400])
-            if sm and sm.group(1).lower() in _STALE_STATUSES:
-                score *= _STATUS_FADE
-            score *= _freshness_weight(_note_age_days(text, md), current_intent)
+            # static_weight folds the de-weight prefix, type weight and stale
+            # status; all three are query-independent and cached with the note.
+            score *= static_weight
+            score *= _freshness_weight(age_days, current_intent)
             scored.append(
                 {
                     "path": rel,
@@ -476,7 +679,7 @@ def search(query: str, *, limit: int = 6, semantic: Optional[bool] = None) -> Li
             file=sys.stderr,
         )
     scored.sort(key=lambda r: r["score"], reverse=True)
-    fused = _semantic_fuse(query, scored, vault, limit, enabled=semantic)
+    fused = _semantic_fuse(query, scored, vault, limit, enabled=semantic, scanned=seen)
     if fused is not None:
         return _freshness_rerank(fused, vault, current_intent)
     for r in scored:
@@ -487,19 +690,215 @@ def search(query: str, *, limit: int = 6, semantic: Optional[bool] = None) -> Li
     return _freshness_rerank(scored[:limit], vault, current_intent)
 
 
-def read_note(rel: str) -> Dict[str, Any]:
-    """Read a note by vault-relative path. Guards against escaping the vault."""
+def read_note(
+    rel: str,
+    *,
+    offset: int = 0,
+    limit: int = _READ_CAP,
+) -> Dict[str, Any]:
+    """Read a paginated note by vault-relative path.
+
+    The old connector silently sliced every note at 20k characters while the
+    MCP tool promised "full content". Large project dossiers therefore hid the
+    newest sections from non-filesystem clients. Keep a bounded default, but
+    return explicit pagination metadata so callers can read to EOF.
+    """
     vault = resolve_vault()
     rel = (rel or "").strip()
     if not rel:
         return {"error": "path is required"}
-    target = (vault / rel).resolve()
-    if vault != target and vault not in target.parents:
+    if not isinstance(offset, int) or offset < 0:
+        return {"error": "offset must be a non-negative integer"}
+    if not isinstance(limit, int) or limit < 1 or limit > _READ_CAP:
+        return {"error": f"limit must be between 1 and {_READ_CAP}"}
+    target = _resolve_in_vault(vault, rel)
+    if target is None:
         return {"error": "path is outside the vault"}
     text = _read_safe(target)
     if text is None:
         return {"error": f"not found: {rel}"}
-    return {"path": rel, "content": text[:_READ_CAP]}
+    total = len(text)
+    content = text[offset:offset + limit]
+    end = offset + len(content)
+    return {
+        "path": rel,
+        "content": content,
+        "offset": offset,
+        "limit": limit,
+        "total_chars": total,
+        "truncated": end < total,
+        "next_offset": end if end < total else None,
+    }
+
+
+def _prepare_note_content(content: str, summary: Optional[str] = None) -> str:
+    """Return one non-empty, platform-neutral preamble plus the note body.
+
+    Agents naturally supplied the preamble required by the skill, while the
+    MCP server also generated one. That produced two or three empty headings in
+    real notes. Accept legacy/model-specific headings, collapse any repeated
+    leading copies, and emit the canonical generic label exactly once.
+    """
+    text = content.strip()
+    had_heading = False
+    while True:
+        match = _PREAMBLE_RE.match(text)
+        if not match:
+            break
+        had_heading = True
+        text = text[match.end():].lstrip("\r\n \t")
+
+    if summary is not None:
+        preamble = summary.strip()
+        rest = text
+    elif had_heading:
+        # The caller already structured the content: after removing duplicate
+        # labels, the first paragraph is the preamble and remains in place.
+        preamble = ""
+        rest = text
+    else:
+        # Promote the first prose paragraph into the preamble instead of copying
+        # it twice. A summary beginning with another H2 is not a summary.
+        blocks = re.split(r"\n[ \t]*\n", text, maxsplit=1)
+        preamble = blocks[0].strip()
+        rest = blocks[1].strip() if len(blocks) == 2 else ""
+
+    if had_heading and summary is None:
+        first = next((line.strip() for line in rest.splitlines() if line.strip()), "")
+        if not first or first.startswith("##"):
+            raise ValueError("the preamble is empty; add 2-3 summary sentences after the heading")
+        return f"## {_PREAMBLE_HEADING}\n{rest}\n"
+
+    if not preamble or preamble.startswith("##"):
+        raise ValueError("summary must be a non-empty prose paragraph")
+    body = f"## {_PREAMBLE_HEADING}\n{preamble}\n"
+    if rest:
+        body += f"\n{rest}\n"
+    return body
+
+
+# ---- service-side bookkeeping ---------------------------------------------------
+# A write through the MCP server used to end at _write_atomic: the note existed,
+# but the vault's own rules - one operation-log line per write, an index entry
+# for a new note, a validation pass - were left to the calling agent, which from
+# another project may only capture into Inbox/ and cannot touch anything else.
+# The service does that bookkeeping now and reports each part separately, so
+# "saved" never implies "logged", "indexed", or "validated". Anything beyond the
+# vault (a git commit, a sync) stays outside the server: set
+# OBSIDIAN_POST_WRITE_CMD to a command that receives <vault> <note> <action>.
+_BOOKKEEPING_ENV = "OBSIDIAN_BOOKKEEPING"        # "0" turns the log line, index entry and validation off
+_POST_WRITE_ENV = "OBSIDIAN_POST_WRITE_CMD"      # optional command run after every successful write
+_POST_WRITE_TIMEOUT_ENV = "OBSIDIAN_POST_WRITE_TIMEOUT"  # seconds, default 45
+
+
+def _bookkeeping_enabled() -> bool:
+    return os.environ.get(_BOOKKEEPING_ENV, "1").strip() != "0"
+
+
+def _is_bookkeeping_surface(rel: str) -> bool:
+    """The operation log and the catalog: a write to them is never logged (no loops)."""
+    r = rel.replace("\\", "/").lower()
+    return r.startswith("logs/") or r in {"log.md", "index.md"}
+
+
+def _append_log_line(vault: Path, action: str, description: str) -> str:
+    """One operation-log line, in the vault's own convention: a per-day file when
+    `Logs/` exists (as /obsidian-init creates it), else a dated section in log.md."""
+    now = datetime.now()
+    day = now.strftime("%Y-%m-%d")
+    logs = vault / "Logs"
+    if logs.is_dir():
+        f = logs / f"{day}.md"
+        if not f.exists():
+            f.write_text(f"---\ntype: log\ndate: {day}\nai-first: true\n---\n\n# {day}\n\n", encoding="utf-8")
+        with f.open("a", encoding="utf-8") as fh:
+            fh.write(f"**{now.strftime('%H:%M')}** - {action} | {description}\n")
+        return f"Logs/{day}.md"
+    with (vault / "log.md").open("a", encoding="utf-8") as fh:
+        fh.write(f"\n## [{day}] {action} | {description}\n")
+    return "log.md"
+
+
+def _add_index_entry(vault: Path, rel: str, summary: str) -> str:
+    """Append `- [[note]] - summary` under index.md's section for the note's folder
+    (`## Inbox/`, `## wiki/entities/`, ...). Reports rather than guesses when the
+    catalog has no such section - index layouts differ per vault."""
+    idx = vault / "index.md"
+    if not idx.is_file():
+        return "index.md not found; no entry added"
+    if "/" not in rel:
+        return "root note; index.md entries are per folder, none added"
+    folder = rel.rsplit("/", 1)[0]
+    text = idx.read_text(encoding="utf-8-sig")
+    m = re.search(rf"^##\s+{re.escape(folder)}/?\s*$", text, re.M)
+    if not m:
+        return f"index.md has no '## {folder}/' section; no entry added"
+    nxt = re.search(r"^## ", text[m.end():], re.M)
+    end = m.end() + (nxt.start() if nxt else len(text) - m.end())
+    section = text[m.end():end]
+    bullet = f"- [[{rel[:-3]}]] - {summary}\n"
+    bullets = list(re.finditer(r"^- \[\[.*$", section, re.M))
+    if bullets:
+        at = m.end() + bullets[-1].end() + 1
+        new = text[:at] + bullet + text[at:]
+    else:
+        new = text[:end].rstrip("\n") + "\n\n" + bullet + ("\n" if nxt else "") + text[end:]
+    _write_atomic(idx, new)
+    return f"index.md '## {folder}/' entry added"
+
+
+def _run_post_write(vault: Path, rel: str, action: str) -> Optional[Dict[str, Any]]:
+    """Run OBSIDIAN_POST_WRITE_CMD <vault> <note> <action>, bounded, never raising.
+    Absent variable: None (the key is omitted). Otherwise a small report."""
+    cmd = os.environ.get(_POST_WRITE_ENV, "").strip()
+    if not cmd:
+        return None
+    try:
+        timeout = float(os.environ.get(_POST_WRITE_TIMEOUT_ENV) or "45")
+    except ValueError:
+        timeout = 45.0
+    try:
+        if cmd.startswith("["):
+            argv = json.loads(cmd)
+            if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv):
+                raise ValueError("expected a non-empty JSON array of strings")
+        else:
+            argv = shlex.split(cmd, posix=(os.name != "nt"))
+            if os.name == "nt":
+                argv = [a[1:-1] if len(a) >= 2 and a[0] == a[-1] and a[0] in ("'", '"') else a for a in argv]
+        if not argv or not argv[0]:
+            raise ValueError("missing executable")
+    except (ValueError, TypeError) as exc:
+        return {"ran": False, "ok": False, "detail": f"invalid post-write command: {exc}"}
+    argv += [str(vault), rel, action]
+    try:
+        p = subprocess.run(argv, cwd=str(vault), capture_output=True, text=True, timeout=timeout)
+    except FileNotFoundError:
+        return {"ran": False, "ok": False, "detail": f"command not found: {argv[0]}"}
+    except subprocess.TimeoutExpired:
+        return {"ran": True, "ok": False, "detail": f"timed out after {timeout:.0f}s"}
+    except OSError as exc:
+        return {"ran": False, "ok": False, "detail": str(exc)}
+    err = (p.stderr or "").strip().splitlines()
+    return {"ran": True, "ok": p.returncode == 0, "detail": (err[-1] if err else "ok")[:300]}
+
+
+def _bookkeep(vault: Path, action: str, rel: str, description: str, *, summary: Optional[str] = None) -> Dict[str, Any]:
+    """Validation, index entry (when a summary is given), log line, post-write
+    command - each reported under its own key so a caller can see exactly what
+    happened after the note was written."""
+    out: Dict[str, Any] = {}
+    if _bookkeeping_enabled() and not _is_bookkeeping_surface(rel):
+        v = validate_note(rel)
+        out["validation"] = ({"ok": v.get("ok"), "issues": v.get("issues", [])}
+                             if "error" not in v else {"ok": None, "issues": [v["error"]]})
+        if summary is not None:
+            out["index"] = _add_index_entry(vault, rel, summary)
+        out["log"] = _append_log_line(vault, action, description)
+    post = _run_post_write(vault, rel, action)
+    if post is not None:
+        out["post_write"] = post
+    return out
 
 
 def save_note(
@@ -508,8 +907,10 @@ def save_note(
     *,
     note_type: str = "note",
     tags: Optional[List[str]] = None,
+    path: Optional[str] = None,
+    summary: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Write an AI-first note to the vault's Inbox folder."""
+    """Write an AI-first note to Inbox or an explicit vault-relative path."""
     vault = resolve_vault()
     title = (title or "").strip()
     content = (content or "").strip()
@@ -518,12 +919,25 @@ def save_note(
     note_type = (note_type or "note").strip() or "note"
     tags = [str(t) for t in (tags or [note_type])]
 
-    inbox = vault / _NOTES_DIR
-    inbox.mkdir(parents=True, exist_ok=True)
     date = datetime.now().strftime("%Y-%m-%d")
-    path = inbox / f"{date} - {_slug(title)}.md"
+    if path:
+        requested = path.strip()
+        target = _resolve_in_vault(vault, requested)
+        if target is None:
+            return {"error": "path is outside the vault"}
+        if target.suffix.lower() != ".md":
+            return {"error": "path must end in .md"}
+        if {p.lower() for p in target.relative_to(vault).parts} & _PROTECTED_WRITE_DIRS:
+            return {"error": "path is in a protected directory"}
+    else:
+        inbox = vault / _NOTES_DIR
+        target = inbox / f"{date} - {_slug(title)}.md"
+
     tag_block = "\n".join(f"  - {t}" for t in tags)
-    preamble = content.split("\n", 1)[0][:280]
+    try:
+        note_body = _prepare_note_content(content, summary)
+    except ValueError as exc:
+        return {"error": str(exc)}
     body = (
         f"---\n"
         f"type: {note_type}\n"
@@ -532,12 +946,28 @@ def save_note(
         f"ai-first: true\n"
         f"source: mcp\n"
         f"---\n\n"
-        f"## For future Claude\n"
-        f"{preamble}\n\n"
-        f"{content}\n"
+        f"{note_body}"
     )
-    path.write_text(body, encoding="utf-8")
-    return {"saved": path.relative_to(vault).as_posix()}
+    # B7: the filename is date + slug, so a second save with the same title on
+    # the same day used to overwrite the first with no error and no backup.
+    # Refuse and point at the tool that can actually edit an existing note.
+    if target.exists():
+        return {
+            "error": (
+                f"a note already exists at {target.relative_to(vault).as_posix()}; "
+                "use obsidian_update_note to append to it, or save under a different title"
+            )
+        }
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _write_atomic(target, body)
+    rel = target.relative_to(vault).as_posix()
+    action = "save" if path else "capture"
+    first = re.sub(r"\s+", " ", content.split("\n", 1)[0]).strip()[:140]
+    tag_note = f" (tags: {', '.join(tags)})" if tags else ""
+    result: Dict[str, Any] = {"saved": rel}
+    result.update(_bookkeep(vault, action, rel, f"{title[:80]} -> [[{rel[:-3]}]]{tag_note}",
+                            summary=f"`type: {note_type}`, {action}d {datetime.now().strftime('%Y-%m-%d %H:%M')} through the MCP server. {first}"))
+    return result
 
 
 def capture_idea(text: str, *, tags: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -568,10 +998,10 @@ def update_note(
     rel = (rel or "").strip()
     if not rel:
         return {"error": "path is required"}
-    target = (vault / rel).resolve()
-    if vault != target and vault not in target.parents:
+    target = _resolve_in_vault(vault, rel)
+    if target is None:
         return {"error": "path is outside the vault"}
-    if set(target.relative_to(vault).parts) & _SKIP_DIRS:
+    if {p.lower() for p in target.relative_to(vault).parts} & _PROTECTED_WRITE_DIRS:
         return {"error": "path is in a protected directory"}
     text = _read_safe(target)
     if text is None:
@@ -593,38 +1023,158 @@ def update_note(
             new_body = new_body.rstrip() + f"\n\n{section}\n"
 
     out = "---\n" + "\n".join(fm_lines).strip("\n") + "\n---\n\n" + new_body.lstrip("\n")
-    target.write_text(out, encoding="utf-8")
-    return {"updated": rel, "set": sorted(fields.keys()), "appended": bool(append)}
+    _write_atomic(target, out)
+    out: Dict[str, Any] = {"updated": rel, "set": sorted(fields.keys()), "appended": bool(append)}
+    out.update(_bookkeep(vault, "update", rel, f"[[{rel[:-3]}]] " + ("appended" if append else "fields set: " + ", ".join(sorted(fields.keys())))))
+    # Surface a retrieval-affecting change instead of making it silent: a status
+    # in _STALE_STATUSES multiplies this note's score in every future search.
+    new_status = str(fields.get("status", "")).strip().lower()
+    if new_status in _STALE_STATUSES:
+        out["faded"] = (
+            f"status '{new_status}' de-ranks this note in all future vault search "
+            f"(score x{_STATUS_FADE}). Set it only if the note no longer holds."
+        )
+    return out
+
+
+def replace_text(rel: str, old_text: str, new_text: str) -> Dict[str, Any]:
+    """Replace one exact, unique block in an existing note atomically.
+
+    This is the MCP equivalent of a guarded patch. Requiring an exact unique
+    anchor prevents a stale Codex context from rewriting the wrong occurrence,
+    while still allowing repairs that append-only update_note cannot express.
+    """
+    vault = resolve_vault()
+    rel = (rel or "").strip()
+    if not rel:
+        return {"error": "path is required"}
+    if not old_text:
+        return {"error": "old_text must not be empty"}
+    target = _resolve_in_vault(vault, rel)
+    if target is None:
+        return {"error": "path is outside the vault"}
+    if {p.lower() for p in target.relative_to(vault).parts} & _PROTECTED_WRITE_DIRS:
+        return {"error": "path is in a protected directory"}
+    text = _read_safe(target)
+    if text is None:
+        return {"error": f"not found: {rel}"}
+    count = text.count(old_text)
+    if count != 1:
+        return {"error": f"old_text must match exactly once; found {count} matches"}
+    _write_atomic(target, text.replace(old_text, new_text, 1))
+    result: Dict[str, Any] = {"updated": rel, "replacements": 1}
+    result.update(_bookkeep(vault, "edit", rel, f"[[{rel[:-3]}]] text replaced"))
+    return result
+
+
+def move_note(source: str, destination: str) -> Dict[str, Any]:
+    """Move one note inside the vault without overwriting anything."""
+    vault = resolve_vault()
+    src = _resolve_in_vault(vault, (source or "").strip())
+    dst = _resolve_in_vault(vault, (destination or "").strip())
+    if src is None or dst is None:
+        return {"error": "source and destination must stay inside the vault"}
+    if src.suffix.lower() != ".md" or dst.suffix.lower() != ".md":
+        return {"error": "source and destination must be markdown notes"}
+    for target in (src, dst):
+        if {p.lower() for p in target.relative_to(vault).parts} & _PROTECTED_WRITE_DIRS:
+            return {"error": "source or destination is in a protected directory"}
+    if not src.is_file():
+        return {"error": f"not found: {source}"}
+    if dst.exists():
+        return {"error": f"destination already exists: {destination}"}
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    # A preflight exists() check followed by os.replace() has a race: another
+    # writer can create the destination between them and be overwritten. A hard
+    # link is exclusive at the filesystem boundary; unlinking the source then
+    # completes the move. If unlinking fails, both copies remain (safe) rather
+    # than either note being lost.
+    try:
+        os.link(src, dst)
+    except FileExistsError:
+        return {"error": f"destination already exists: {destination}"}
+    except OSError as exc:
+        return {"error": f"could not create destination safely: {exc}"}
+    try:
+        src.unlink()
+    except OSError as exc:
+        return {
+            "error": f"destination was created but source could not be removed: {exc}",
+            "destination": destination,
+        }
+    result: Dict[str, Any] = {
+        "moved": source,
+        "destination": destination,
+        "warning": "update any path-qualified wikilinks that still name the old path",
+    }
+    result.update(_bookkeep(vault, "move", destination, f"{source} -> [[{destination[:-3]}]]"))
+    return result
 
 
 def validate_note(rel: str) -> Dict[str, Any]:
     """Check a note against the AI-first rule and for unresolved wikilinks.
 
     Returns {path, ok, issues}. Issues cover missing frontmatter, missing
-    required keys (type/date/tags/ai-first), a missing `## For future Claude`
-    preamble, and `[[wikilinks]]` whose target note does not exist in the vault.
+    required keys (type/date/tags/ai-first), a missing or empty AI preamble,
+    and `[[wikilinks]]` whose target note does not exist in the vault.
     """
     vault = resolve_vault()
     rel = (rel or "").strip()
     if not rel:
         return {"error": "path is required"}
-    target = (vault / rel).resolve()
-    if vault != target and vault not in target.parents:
+    target = _resolve_in_vault(vault, rel)
+    if target is None:
         return {"error": "path is outside the vault"}
     text = _read_safe(target)
     if text is None:
         return {"error": f"not found: {rel}"}
 
+    parts = PurePosixPath(rel).parts
+    first = parts[0].lower() if parts else ""
+    # These are documented exceptions in ai-first-rules.md, not knowledge
+    # notes. The old MCP validator contradicted the spec and reported every
+    # kanban board as broken because a preamble would become a phantom column.
+    if (
+        (len(parts) == 1 and target.name in _VALIDATION_EXEMPT_ROOT_FILES)
+        or first in {"raw", "templates", "boards", "logs"}
+        or "kanban-plugin: board" in text[:1_000]
+    ):
+        return {"path": rel, "ok": True, "issues": [], "exempt": True}
+
     issues: List[str] = []
-    fm_lines, _, had_fm = _split_frontmatter(text)
+    fm_lines, note_body, had_fm = _split_frontmatter(text)
     fmtext = "\n".join(fm_lines)
     if not had_fm:
         issues.append("missing frontmatter block")
     for key in ("type", "date", "tags", "ai-first"):
         if not re.search(rf"(?mi)^{key}:", fmtext):
             issues.append(f"missing frontmatter key: {key}")
-    if "## For future Claude" not in text:
-        issues.append("missing '## For future Claude' preamble")
+    preambles = list(_PREAMBLE_RE.finditer(note_body))
+    if not preambles:
+        issues.append(f"missing '## {_PREAMBLE_HEADING}' preamble")
+    else:
+        # Count only consecutive headings at the start of this note's preamble.
+        # NotebookLM bundles legitimately embed complete source notes, each with
+        # its own preamble later in the body; those are not duplicates of the
+        # outer note. The real corruption is repeated empty headings before the
+        # first summary sentence.
+        duplicate_count = 1
+        cursor = preambles[0].end()
+        while True:
+            remainder = note_body[cursor:].lstrip("\r\n \t")
+            repeated = _PREAMBLE_RE.match(remainder)
+            if not repeated:
+                break
+            duplicate_count += 1
+            cursor = len(note_body) - len(remainder) + repeated.end()
+        if duplicate_count > 1:
+            issues.append(f"duplicate future-agent preambles: found {duplicate_count}")
+        after = note_body[cursor:]
+        first_line = next((line.strip() for line in after.splitlines() if line.strip()), "")
+        # A callout preamble continues on `> ` lines, so a bare `>` is as empty
+        # as a blank line under a heading.
+        if not first_line.lstrip(">").strip() or first_line.startswith("##"):
+            issues.append("future-agent preamble is empty")
     index = _stem_index(vault)
     seen = set()
     for link in _wikilinks(text):
@@ -759,8 +1309,17 @@ def get_skill(name: str) -> Dict[str, Any]:
     meta, body = _parse_command(md)
     note = (
         "Run this skill using the MCP tools on this server for vault I/O: "
-        "obsidian_search (find/recall), obsidian_read_note (read), "
-        "obsidian_save_note / obsidian_capture (write). Follow the steps below."
+        "obsidian_search (find/recall), obsidian_read_note (paginated read to EOF), "
+        "obsidian_backlinks (graph), "
+        "obsidian_update_note (append to, or set frontmatter on, an EXISTING note - "
+        "use this whenever a step says update, rewrite, or integrate), "
+        "obsidian_replace_text (exact guarded patch of an EXISTING note), "
+        "obsidian_move_note (graduate an Inbox note without overwriting), "
+        "obsidian_save_note / obsidian_capture (create a NEW note, with optional path), "
+        "obsidian_validate_note (check a note before or after a write). "
+        "For broad rewrites, use multiple exact patches or report that the operation "
+        "needs direct filesystem access; never approximate it with a duplicate note. "
+        "Follow the steps below."
     )
     return {
         "name": name,
@@ -778,19 +1337,37 @@ def _iter_notes(vault: Path):
     """Yield vault notes newest-first (modified time). Deterministic on purpose:
     every consumer of this iterator caps its scan, and a cap that bites must
     drop the oldest notes, never a random filesystem-order slice."""
+    config_path = vault / ".vault-config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8-sig")) if config_path.exists() else {}
+    if not isinstance(config, dict):
+        raise ValueError(".vault-config.json must contain an object")
+    for key in ("exclude-dirs", "exclude-paths"):
+        values = config.get(key, [])
+        if not isinstance(values, list) or not all(isinstance(v, str) for v in values):
+            raise ValueError(f".vault-config.json {key} must be a list of strings")
+    excluded = _SKIP_DIRS | {d.lower() for d in config.get("exclude-dirs", [])}
+    prefixes = [p.replace("\\", "/").strip("/").lower() for p in config.get("exclude-paths", [])]
+
+    def excluded_path(path):
+        rel = path.relative_to(vault)
+        key = rel.as_posix().lower()
+        return (any(p.lower() in excluded or p.lower().endswith("templates") for p in rel.parts)
+                or any(key == p or key.startswith(p + "/") for p in prefixes if p))
+
     found = []
-    for md in vault.rglob("*.md"):
-        parts = md.relative_to(vault).parts
-        if any(p.lower() in _SKIP_DIRS or p.lower().endswith("templates") for p in parts):
-            continue
-        # Drawings are JSON blobs in .md clothing; the semantic index skips them,
-        # so the lexical scan does too - one universe for every mode.
-        if md.name.endswith(".excalidraw.md"):
-            continue
-        try:
-            found.append((md.stat().st_mtime, md))
-        except OSError:
-            continue  # dangling symlink or race: a ghost must not kill the scan
+    for directory, dirs, names in os.walk(vault, followlinks=False):
+        base = Path(directory)
+        dirs[:] = [d for d in dirs if not excluded_path(base / d)
+                   and not (base / d).is_symlink()
+                   and not getattr(base / d, "is_junction", lambda: False)()]
+        for name in names:
+            md = base / name
+            if not name.endswith(".md") or name.endswith(".excalidraw.md") or excluded_path(md) or md.is_symlink():
+                continue
+            try:
+                found.append((md.stat().st_mtime, md))
+            except OSError:
+                continue
     found.sort(key=lambda t: t[0], reverse=True)
     for _, md in found:
         yield md
@@ -833,11 +1410,57 @@ def _snippet(text: str, terms: List[str]) -> str:
     return text[start : start + _SNIPPET_CHARS].replace("\n", " ").strip()
 
 
+def _write_atomic(path: Path, text: str) -> None:
+    """Write via temp file + os.replace, preserving the target's mode.
+
+    Both write paths here run over a live MCP connection, so a client timeout or
+    a crash mid-write would otherwise leave a half-written note with no backup.
+    Mirrors scripts/note_io.write_exact, which the vault scripts already use.
+    """
+    import os as _os
+    import tempfile
+    keep_mode = None
+    try:
+        keep_mode = path.stat().st_mode
+    except OSError:
+        pass
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".{}.".format(path.name), suffix=".tmp")
+    try:
+        with _os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+        if keep_mode is not None:
+            Path(tmp).chmod(keep_mode)
+        Path(tmp).replace(path)
+    except BaseException:
+        try:
+            Path(tmp).unlink()
+        except OSError:
+            pass
+        raise
+
+
+def _resolve_in_vault(vault: Path, rel: str) -> Optional[Path]:
+    """Resolve a vault-relative path, refusing anything that escapes the vault.
+
+    A security boundary, so it lives in exactly one place. It was previously
+    inlined identically in read_note, update_note, and validate_note; the next
+    tool to forget a line would have reintroduced traversal silently.
+    """
+    target = (vault / rel).resolve()
+    if vault != target and vault not in target.parents:
+        return None
+    return target
+
+
 def _read_safe(path: Path, *, limit: int = 4_000_000) -> Optional[str]:
+    # utf-8-sig, matching every sibling reader (vault_health, vault_stats,
+    # link_graph, export_okf). Plain utf-8 leaves a BOM glued to the first line,
+    # which breaks frontmatter detection and shows up in every snippet this
+    # server surfaces. Windows editors and several sync tools emit BOMs.
     try:
         if not path.is_file():
             return None
-        return path.read_text(encoding="utf-8", errors="replace")[:limit]
+        return path.read_text(encoding="utf-8-sig", errors="replace")[:limit]
     except OSError:
         return None
 
@@ -849,25 +1472,85 @@ def _slug(text: str) -> str:
 
 
 _WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)")
+# Fenced blocks and inline code are quotation, not linkage: the bootstrapped
+# _CLAUDE.md demonstrates [[Related Project]] [[Person]] inside a fence, log
+# pointers ship their entry template in one, and doc notes demo [[wikilinks]]
+# in backticks. Counting those made them persistent false-positive wanted
+# notes in vault_health and false "unresolved wikilink" validation issues.
+# Same stripping the CLI applies (scripts/vault_health.py _strip_code, #82,
+# extended by #93); this server had the same gap. Deliberately the CLI's
+# exact scope: triple-backtick fences and single-backtick spans (tilde
+# fences and multi-backtick spans are a separate gap shared with the CLI).
+_CODE_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
+_INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
 
 
 def _wikilinks(text: str) -> List[str]:
-    """Return the raw target of each [[wikilink]] (before any | alias or # anchor)."""
-    return [m.group(1).strip() for m in _WIKILINK_RE.finditer(text)]
+    """Return the raw target of each [[wikilink]] (before any | alias or # anchor),
+    ignoring links quoted inside fenced code blocks or inline code spans."""
+    stripped = _INLINE_CODE_RE.sub("", _CODE_FENCE_RE.sub("", text))
+    return [m.group(1).strip() for m in _WIKILINK_RE.finditer(stripped)]
+
+
+def _nfc(s: str) -> str:
+    """Canonical Unicode form, matching vault_health._nfc.
+
+    macOS stores filenames decomposed (NFD) while a typed wikilink is usually
+    composed (NFC), so an accented title compares unequal without this and the
+    note is reported as a false orphan. Fixed in vault_health and link_graph by
+    PR #161; this server had the same gap.
+    """
+    return unicodedata.normalize("NFC", s)
 
 
 def _norm_link(link: str) -> str:
     """Normalize a wikilink target to a comparable note stem (basename, lowercased)."""
-    return link.split("/")[-1].strip().lower()
+    return _nfc(link.split("/")[-1].strip()).lower()
+
+
+def _frontmatter_aliases(text: str) -> List[str]:
+    """Parse scalar, inline-list, and block-list aliases without PyYAML."""
+    fm_lines, _, had_fm = _split_frontmatter(text)
+    if not had_fm:
+        return []
+    aliases: List[str] = []
+    collecting = False
+    for line in fm_lines:
+        if collecting:
+            item = re.match(r"^[ \t]*-[ \t]+(.+?)\s*$", line)
+            if item:
+                aliases.append(item.group(1).strip().strip("'\""))
+                continue
+            if line.strip() and not line.startswith((" ", "\t")):
+                collecting = False
+        match = re.match(r"^aliases:\s*(.*?)\s*$", line, re.I)
+        if not match:
+            continue
+        raw = match.group(1).strip()
+        if not raw:
+            collecting = True
+        elif raw.startswith("[") and raw.endswith("]"):
+            aliases.extend(
+                item.strip().strip("'\"")
+                for item in raw[1:-1].split(",")
+                if item.strip()
+            )
+        else:
+            aliases.append(raw.strip("'\""))
+    return [alias for alias in aliases if alias]
 
 
 def _stem_index(vault: Path) -> Dict[str, str]:
-    """Map every note's lowercased stem to its vault-relative path (bounded)."""
+    """Map every note stem and frontmatter alias to its path (bounded)."""
     idx: Dict[str, str] = {}
     for i, md in enumerate(_iter_notes(vault)):
         if i >= _MAX_FILES_SCANNED:
             break
-        idx[md.stem.lower()] = str(md.relative_to(vault))
+        rel = str(md.relative_to(vault))
+        idx[_nfc(md.stem).lower()] = rel
+        head = _read_safe(md, limit=8_000) or ""
+        for alias in _frontmatter_aliases(head):
+            idx[_norm_link(alias)] = rel
     return idx
 
 

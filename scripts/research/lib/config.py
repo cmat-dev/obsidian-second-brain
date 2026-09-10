@@ -1,11 +1,16 @@
 """Loads research-toolkit credentials and model defaults from ~/.config/obsidian-second-brain/.env"""
 
-from pathlib import Path
-from dotenv import load_dotenv
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 CONFIG_DIR = Path.home() / ".config" / "obsidian-second-brain"
-ENV_PATH = CONFIG_DIR / ".env"
+# OBSIDIAN_ENV_FILE points every half of the toolkit (this loader, the free-mode
+# source config, the retrieval eval, the MCP server, the write-time hook) at one
+# file (on Windows a native path, C:/... or with backslashes, which bash and
+# Python can both open). Environment variables still win over anything the file sets.
+ENV_PATH = Path(os.environ.get("OBSIDIAN_ENV_FILE") or (CONFIG_DIR / ".env")).expanduser()
 
 load_dotenv(ENV_PATH)
 
@@ -25,9 +30,24 @@ def get_optional(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip() or default
 
 
+def get_optional_int(name: str, default: int) -> int:
+    """Integer knob from the environment. A value that is not a whole number
+    (`480k`, `1e6`, `24,000`) exits with the variable named, instead of an
+    `int()` traceback from somewhere inside the command."""
+    raw = get_optional(name, str(default))
+    try:
+        return int(raw)
+    except ValueError:
+        raise SystemExit(
+            f"\n{name}={raw!r} is not a whole number.\n"
+            f"Set it to a plain integer (e.g. {name}={default}) in {ENV_PATH}, or unset it.\n"
+        ) from None
+
+
 XAI_API_KEY = lambda: get_required("XAI_API_KEY")
 PERPLEXITY_API_KEY = lambda: get_required("PERPLEXITY_API_KEY")
 GEMINI_API_KEY = lambda: get_required("GEMINI_API_KEY")
+OPENAI_API_KEY = lambda: get_required("OPENAI_API_KEY")
 YOUTUBE_API_KEY = lambda: get_optional("YOUTUBE_API_KEY", "")
 
 # grok-4 no longer appears in GET /v1/models (it still resolves server-side, but is
@@ -36,6 +56,10 @@ GROK_MODEL = get_optional("GROK_MODEL", "grok-4.5")
 PERPLEXITY_RESEARCH_MODEL = get_optional("PERPLEXITY_RESEARCH_MODEL", "sonar-pro")
 PERPLEXITY_DEEP_MODEL = get_optional("PERPLEXITY_DEEP_MODEL", "sonar-deep-research")
 NOTEBOOKLM_MODEL = get_optional("NOTEBOOKLM_MODEL", "gemini-2.5-flash")
+# behavior_eval.py's judge - deliberately a different provider from GROK_MODEL,
+# which generates the answers being judged, so grading a model's own answers
+# never happens by default.
+GPT_JUDGE_MODEL = get_optional("GPT_JUDGE_MODEL", "gpt-4o-mini")
 
 VAULT_PATH = Path(get_required("OBSIDIAN_VAULT_PATH")).expanduser()
 USAGE_LOG = Path.home() / ".research-toolkit" / "usage.log"

@@ -4,6 +4,7 @@ category: thinking
 triggers_en: ["synthesize what I know about", "deep synthesis on", "cross-reference my notes on", "what does my vault say about"]
 triggers_es: ["sintetiza lo que sé sobre", "síntesis profunda sobre", "cruza mis notas sobre", "qué dice mi vault sobre"]
 triggers_pt: ["sintetize o que eu sei sobre", "síntese profunda sobre", "cruze minhas notas sobre", "o que meu vault diz sobre"]
+triggers_zh: ["综合知识库里关于这个主题的一切", "深度梳理我对这个主题的笔记", "交叉核对这个主题的所有记录", "我的知识库对这个主题怎么说"]
 ---
 
 Use the obsidian-second-brain skill. Execute `/vault-deep-synthesis [topic]`:
@@ -22,6 +23,6 @@ A focused, topic-driven cross-reference of the existing vault. Unlike `/obsidian
 
 ---
 
-**AI-first rule:** Every note created or updated by this command MUST follow `references/ai-first-rules.md` - `## For future Claude` preamble, rich frontmatter (`type`, `date`, `tags`, `ai-first: true`, plus type-specific fields), recency markers per external claim, mandatory `[[wikilinks]]` for every person/project/concept referenced, sources preserved verbatim with URLs inline, and confidence levels where applicable. The vault is for future-Claude retrieval - not human reading.
+**AI-first rule:** Every note created or updated by this command MUST follow `references/ai-first-rules.md` - `## For future agent` preamble, rich frontmatter (`type`, `date`, `tags`, `ai-first: true`, plus type-specific fields), recency markers per external claim, mandatory `[[wikilinks]]` for every person/project/concept referenced, sources preserved verbatim with URLs inline, and confidence levels where applicable. If that path does not resolve from your working directory, search upward for it; if you still cannot read it, say so before writing rather than producing a note that silently skips the rule. The vault is for future agent retrieval - not human reading.
 
 **Anti-fabrication:** Enumerate the matching notes exhaustively, do not sample - a partial scan reported as complete produces confident wrong answers. Never invent a claim, contradiction, or source; if the vault is thin on the topic, say so. See the anti-fabrication and search-completeness hard rules in `references/ai-first-rules.md`.

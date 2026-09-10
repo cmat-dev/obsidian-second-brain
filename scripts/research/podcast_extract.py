@@ -5,8 +5,9 @@ Inputs: Apple Podcasts URL OR RSS feed URL (with optional ?episode=<guid> select
 
 Transcript priority:
   1. <podcast:transcript> tag in the RSS feed (free)
-  2. Whisper API if OPENAI_API_KEY is set (paid, ~$0.006/min)
-  3. Show-notes-only fallback (no audio fetch)
+  2. Groq-hosted Whisper if GROQ_API_KEY is set (free tier, ASH-limited)
+  3. Whisper API if OPENAI_API_KEY is set (paid, ~$0.006/min)
+  4. Show-notes-only fallback (no audio fetch)
 
 Then summarizes via Grok and saves an AI-first note to Research/Podcasts/.
 Spotify episode URLs are supported via the public-RSS bridge (lib/podcast.py):
@@ -16,9 +17,10 @@ the episode is resolved to its open feed and pulled from there, never from Spoti
 import os
 import sys
 from datetime import datetime
-from .lib import grok, podcast, vault
 
-SUMMARIZE_PROMPT = """You are summarizing a podcast episode for a knowledge vault. The note will be read by future-Claude (an AI), not by a human. Optimize for AI retrieval.
+from .lib import config, grok, groq, podcast, vault
+
+SUMMARIZE_PROMPT = """You are summarizing a podcast episode for a knowledge vault. The note will be read by future agent (an AI), not by a human. Optimize for AI retrieval.
 
 SHOW: {show}
 HOST: {host}
@@ -54,11 +56,11 @@ Produce EXACTLY this structure (markdown):
 - [Specific things mentioned that would be worth a deeper /research call later]
 
 Rules:
-- Be specific. "Talks about AI" is useless to future-Claude. "Argues that LLM context windows over 1M tokens degrade reasoning quality after 200k tokens" is useful.
+- Be specific. "Talks about AI" is useless to future agent. "Argues that LLM context windows over 1M tokens degrade reasoning quality after 200k tokens" is useful.
 - Don't pad. If a section is genuinely thin, write one bullet and move on.
 - Don't invent quotes. If TRANSCRIPT SOURCE is "show-notes" you have no transcript - leave Notable Quotes empty.
 - Don't add commentary outside this structure.
-- **Wikilinks are mandatory.** Wrap every named person, company, project, product, book, and named concept in `[[Name]]` so future-Claude can traverse the vault graph. Examples: `[[Sam Altman]]`, `[[OpenAI]]`, `[[GPT-5]]`, `[[Attention Is All You Need]]`. This applies in every section - TL;DR, Key Points, Notable Quotes (the speaker attribution), Themes, Guests & People Mentioned, Worth Following Up On.
+- **Wikilinks are mandatory.** Wrap every named person, company, project, product, book, and named concept in `[[Name]]` so future agent can traverse the vault graph. Examples: `[[Sam Altman]]`, `[[OpenAI]]`, `[[GPT-5]]`, `[[Attention Is All You Need]]`. This applies in every section - TL;DR, Key Points, Notable Quotes (the speaker attribution), Themes, Guests & People Mentioned, Worth Following Up On.
 """
 
 
@@ -69,8 +71,9 @@ def _resolve_transcript(episode: dict) -> tuple[str | None, str]:
     """Return (transcript_text_or_None, source_label).
 
     Falls through silently to the next path only when the prior path is unavailable;
-    every rejection (transcript tag too short, Whisper too short, JSON unparseable)
-    is logged so the user knows why a costlier path is being attempted.
+    every rejection (transcript tag too short, Groq empty/ASH-exhausted, Whisper too
+    short, JSON unparseable) is logged so the user knows why a costlier path is being
+    attempted.
     """
     if episode.get("transcript_url"):
         print(f"[/podcast] Fetching transcript tag: {episode['transcript_url']}", file=sys.stderr)
@@ -91,6 +94,16 @@ def _resolve_transcript(episode: dict) -> tuple[str | None, str]:
             return text, "rss-transcript-tag"
 
     if episode.get("audio_url"):
+        if groq.is_groq_configured():
+            print("[/podcast] Trying Groq Whisper (free tier)...", file=sys.stderr)
+            text = groq.transcribe_via_groq(episode["audio_url"], podcast.safe_fetch_url)
+            if text and len(text) > MIN_TRANSCRIPT_CHARS:
+                return text, "groq-whisper-api"
+            print(
+                "[/podcast] Groq returned no usable transcript - falling through. "
+                "(429 = free-tier ASH limit for this hour; not retried per episode.)",
+                file=sys.stderr,
+            )
         if not os.environ.get("OPENAI_API_KEY", "").strip():
             print(
                 "[/podcast] Skipping Whisper: OPENAI_API_KEY not set. "
@@ -147,7 +160,9 @@ def main(argv: list[str]) -> int:
     transcript_text, transcript_source = _resolve_transcript(episode)
 
     if transcript_text:
-        TX_LIMIT = 24000  # ~6k tokens
+        # Podcasts are 1-3h conversations; the old 24k cap discarded most of
+        # the episode. Same rationale as YOUTUBE_TX_LIMIT in youtube_extract.
+        TX_LIMIT = config.get_optional_int("PODCAST_TX_LIMIT", 480000)
         content = transcript_text[:TX_LIMIT]
         if len(transcript_text) > TX_LIMIT:
             content += f"\n\n[Transcript truncated at {TX_LIMIT} chars from total {len(transcript_text)} chars]"
@@ -172,12 +187,27 @@ def main(argv: list[str]) -> int:
         content=content,
     )
 
-    print(f"[/podcast] Summarizing via Grok (source: {transcript_source})...\n", file=sys.stderr)
-    try:
-        result = grok.call(prompt, command="podcast", max_output_tokens=3000)
-    except Exception as e:
-        print(f"\n❌ /podcast summarize failed: {e}", file=sys.stderr)
-        return 1
+    # Prefer Gemini for the summary when its key is set (generous free tier),
+    # fall back to Grok - transparently, since gemini.call mirrors grok.call's
+    # return shape. No Gemini key = exactly the old Grok-only behavior.
+    # Same pattern as /youtube (youtube_extract.py).
+    result = None
+    summarizer = "Grok"
+    if os.environ.get("GEMINI_API_KEY", "").strip():
+        print("[/podcast] Summarizing via Gemini (free tier)...\n", file=sys.stderr)
+        try:
+            from .lib import gemini
+            result = gemini.call(prompt, command="podcast", max_output_tokens=3000)
+            summarizer = "Gemini"
+        except Exception as e:  # noqa: BLE001 - fall back to Grok on any Gemini failure
+            print(f"[/podcast] Gemini failed ({e}); falling back to Grok...", file=sys.stderr)
+    if result is None:
+        print(f"[/podcast] Summarizing via Grok (source: {transcript_source})...\n", file=sys.stderr)
+        try:
+            result = grok.call(prompt, command="podcast", max_output_tokens=3000)
+        except Exception as e:
+            print(f"\n❌ /podcast summarize failed: {e}", file=sys.stderr)
+            return 1
 
     print(f"# {title}")
     print(f"**Show:** {show} · **Host:** {host} · **Published:** {published}")
@@ -187,12 +217,13 @@ def main(argv: list[str]) -> int:
     # AI-first save
     now = datetime.now()
     preamble = (
-        f"For future Claude: This note is a {transcript_source}-grounded summary of podcast episode "
+        f"For future agent: This note is a {transcript_source}-grounded summary of podcast episode "
         f"\"{title}\" from {show} ({host}, published {published}), processed on "
-        f"{now.strftime('%Y-%m-%d %H:%M')}. Summarized via Grok. "
+        f"{now.strftime('%Y-%m-%d %H:%M')}. Summarized via {summarizer}. "
         f"Source label '{transcript_source}' indicates transcript provenance: "
-        f"'rss-transcript-tag' (publisher-provided, high fidelity), 'whisper-api' "
-        f"(Whisper transcription, may have errors on names), or 'show-notes' "
+        f"'rss-transcript-tag' (publisher-provided, high fidelity), 'groq-whisper-api' "
+        f"(free-tier Groq-hosted Whisper, may have errors on names), 'whisper-api' "
+        f"(OpenAI Whisper transcription, may have errors on names), or 'show-notes' "
         f"(notes only, no transcript - quotes will be absent). Use Worth Following Up On bullets to spawn deeper research."
     )
     fm = {
@@ -216,7 +247,7 @@ def main(argv: list[str]) -> int:
     show_link = f"[[{show}]]" if show and show != "(unknown show)" else show
     host_link = f"[[{host}]]" if host and host != "(unknown)" else host
     note_body = (
-        f"## For future Claude\n\n{preamble}\n\n"
+        f"## For future agent\n\n{preamble}\n\n"
         f"## Episode\n\n"
         f"- **Show:** {show_link}\n"
         f"- **Host:** {host_link}\n"

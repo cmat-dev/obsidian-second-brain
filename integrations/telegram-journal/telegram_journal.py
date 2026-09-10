@@ -22,14 +22,14 @@ Config/secrets come from ~/.config/obsidian-second-brain/telegram_journal.env
 TRANSCRIBE_BACKEND=openai, the default), ANTHROPIC_API_KEY, VAULT_PATH
 This file holds no secrets and is safe to read or share.
 """
-import os
-import re
-import sys
-import json
 import base64
 import datetime
+import json
+import os
 import pathlib
+import re
 import subprocess
+import sys
 
 import requests
 
@@ -63,6 +63,12 @@ VAULT = pathlib.Path(os.environ.get("VAULT_PATH", "")).expanduser()
 SKILL_REPO = pathlib.Path(os.environ.get(
     "OBSIDIAN_SKILL_REPO", "~/obsidian-second-brain")).expanduser()
 UV_BIN = os.environ.get("UV_BIN", "uv")  # set to an absolute path if uv is not on the launchd/cron PATH
+# Sender allowlist. A bot's username is discoverable, so without this gate anyone who
+# finds the bot can write into the vault and spend the API keys - and a vault entry is
+# memory a later agent treats as trusted. Fails closed: unset means every sender is
+# refused (and told their chat id, so the owner can add it). Comma-separated chat ids.
+ALLOWED_CHAT_IDS = frozenset(
+    s.strip() for s in os.environ.get("TELEGRAM_ALLOWED_CHAT_IDS", "").split(",") if s.strip())
 URL_RE = re.compile(r"https?://[^\s>]+")
 API = f"https://api.telegram.org/bot{TOKEN}"
 FILE_API = f"https://api.telegram.org/file/bot{TOKEN}"
@@ -122,7 +128,7 @@ def download(file_id):
     info = tg("getFile", file_id=file_id)
     path = info["result"]["file_path"]
     data = requests.get(f"{FILE_API}/{path}", timeout=120).content
-    return data, os.path.splitext(path)[1].lower()
+    return data, pathlib.Path(path).suffix.lower()
 
 
 def transcribe(file_id):
@@ -166,9 +172,9 @@ def transcribe_local(audio, suffix):
         except FileNotFoundError:
             raise RuntimeError(
                 f"local transcription needs the '{WHISPER_BIN}' CLI - "
-                "pip install openai-whisper (and install ffmpeg), or set WHISPER_BIN")
+                "pip install openai-whisper (and install ffmpeg), or set WHISPER_BIN") from None
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"whisper failed: {(e.stderr or '').strip()[-300:]}")
+            raise RuntimeError(f"whisper failed: {(e.stderr or '').strip()[-300:]}") from e
         out = pathlib.Path(tmp) / f"{src.stem}.txt"
         return out.read_text().strip() if out.exists() else ""
 
@@ -268,7 +274,7 @@ def ensure_daily(note, when):
     dow = when.strftime("%A")
     note.write_text(
         f"---\ntype: daily\ndate: {day}\nday-of-week: {dow}\ntags:\n  - daily\n"
-        f"ai-first: true\n---\n\n## For future Claude\n\n"
+        f"ai-first: true\n---\n\n## For future agent\n\n"
         f"Daily note for {day} ({dow}). Journal entries captured via the Telegram journal bot.\n",
         encoding="utf-8",
     )
@@ -405,7 +411,7 @@ def handle_photo(msg, chat_id, when):
 
 
 PDF_PROMPT = """This PDF was saved by the user to their AI-first Obsidian vault. Write a note \
-for future-Claude retrieval.
+for future agent retrieval.
 
 Output (plain ASCII, no emoji):
 TITLE: <short descriptive title, max ~10 words>
@@ -515,7 +521,7 @@ Context where it was mentioned:
 Reply with ONLY a JSON object:
 {{
  "type": "person | company | project | concept | stub",
- "body": "2-4 sentence note body for future-Claude: what or who {name} is, from the context plus what you reliably know. Mark anything uncertain as TBD. Do NOT invent specific facts (dates, numbers, titles, relationships) not supported by the context or common knowledge. Plain ASCII, no emoji."
+ "body": "2-4 sentence note body for future agent: what or who {name} is, from the context plus what you reliably know. Mark anything uncertain as TBD. Do NOT invent specific facts (dates, numbers, titles, relationships) not supported by the context or common knowledge. Plain ASCII, no emoji."
 }}"""
 
 NONEMBED_LINK = re.compile(r"(?<!\!)\[\[([^\]]+)\]\]")
@@ -542,6 +548,32 @@ def stub_info(name, context):
     return json.loads(m.group(0))
 
 
+def sender_allowed(chat_id):
+    """True only for a chat id listed in TELEGRAM_ALLOWED_CHAT_IDS. Unset list = nobody."""
+    return chat_id is not None and str(chat_id) in ALLOWED_CHAT_IDS
+
+
+def safe_note_path(folder, name):
+    """`folder/<name>.md`, or None if the name would land anywhere else.
+
+    `name` comes out of a `[[wikilink]]` the model wrote, so it is untrusted input:
+    `[[../../.ssh/authorized_keys]]` must not become a write outside the vault.
+    Rejects path separators, dot-names, and anything whose resolved parent is not
+    exactly `folder`."""
+    name = (name or "").strip()
+    if not name or name in (".", "..") or name.startswith(".") or "\0" in name:
+        return None
+    if "/" in name or "\\" in name:
+        return None
+    candidate = folder / f"{name}.md"
+    try:
+        if candidate.resolve().parent != folder.resolve():
+            return None
+    except (OSError, RuntimeError):
+        return None
+    return candidate
+
+
 def create_stub(name, context, when):
     try:
         info = stub_info(name, context)
@@ -556,14 +588,17 @@ def create_stub(name, context, when):
     folder = _folder(TYPE_KIND.get(ntype, "stub"))
     d = VAULT / folder
     d.mkdir(parents=True, exist_ok=True)
-    note = d / f"{name}.md"
+    note = safe_note_path(d, name)
+    if note is None:
+        print(f"refused stub for {name!r}: not a plain note name", file=sys.stderr)
+        return
     if note.exists():
         return
     today = when.strftime("%Y-%m-%d")
     body = str(info.get("body") or "").strip() or f"Referenced in a capture on {today}. TBD."
     note.write_text(
         f"---\ntype: {ntype}\ndate: {today}\ntags: [{ntype}, telegram-capture]\nai-first: true\n---\n\n"
-        f"## For future Claude\n\n{body}\n",
+        f"## For future agent\n\n{body}\n",
         encoding="utf-8")
     all_stems().add(name.lower())
 
@@ -596,7 +631,7 @@ def queue_catchup(kind, summary, when, where=""):
     if not CATCHUP.exists():
         CATCHUP.write_text(
             "---\ntype: catchup-queue\nai-first: true\n---\n\n"
-            "## For future Claude\n\nUnprocessed captures from the Telegram journal bot, "
+            "## For future agent\n\nUnprocessed captures from the Telegram journal bot, "
             "newest at the bottom. Each line is `- [ ] date time | kind | summary | -> where`. "
             "Run /obsidian-catchup to review the unchecked items together, then they get "
             "checked off. The bot only queues here - it never processes.\n\n## Queue\n\n",
@@ -625,6 +660,16 @@ def main():
         last = u["update_id"] + 1
         msg = u.get("message") or {}
         chat_id = (msg.get("chat") or {}).get("id")
+        if not sender_allowed(chat_id):
+            print(f"refused update {u['update_id']} from chat {chat_id}: "
+                  "not in TELEGRAM_ALLOWED_CHAT_IDS", file=sys.stderr)
+            if not ALLOWED_CHAT_IDS:
+                # Nothing configured yet: this is the owner's first message. Tell them
+                # the id to add. Once a list exists, strangers get silence.
+                reply(chat_id, f"This bot is private and not set up yet. Your chat id is "
+                               f"{chat_id} - add it to TELEGRAM_ALLOWED_CHAT_IDS in the bot's "
+                               f"config and it will start saving your captures.")
+            continue
         when = datetime.datetime.now()
         try:
             if "photo" in msg:

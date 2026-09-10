@@ -10,7 +10,11 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SCRIPT="$HERE/telegram_journal.py"
-CONFIG_DIR="$HOME/.config/obsidian-second-brain"
+# Home for config and Claude Code state (OSB_HOME, OSB_WIN): USERPROFILE on
+# Windows shells, HOME elsewhere. See scripts/platform-home.sh at the repo root.
+. "$HERE/../../scripts/platform-home.sh"
+osb_platform_home
+CONFIG_DIR="$OSB_HOME/.config/obsidian-second-brain"
 CONFIG="$CONFIG_DIR/telegram_journal.env"
 UV="$(command -v uv || true)"
 
@@ -28,6 +32,9 @@ if [ -f "$CONFIG" ]; then
 else
   echo "Creating your config. Leave optional fields blank to skip."
   read -r -p "  Telegram bot token (from @BotFather): " BOT
+  echo "  Your Telegram chat id (message @userinfobot to get it). Only listed ids may write to"
+  echo "  your vault. Leave blank to have the bot tell you your id on the first message."
+  read -r -p "  Allowed chat id(s), comma-separated: " CHATS
   read -r -p "  Transcribe voice locally (on-box, no OpenAI key)? [y/N]: " LOCAL
   if [[ "$LOCAL" =~ ^[Yy] ]]; then
     BACKEND=local
@@ -48,6 +55,7 @@ else
   REPO="${REPO:-$HOME/obsidian-second-brain}"
   ( umask 077; cat > "$CONFIG" <<EOF
 TELEGRAM_JOURNAL_BOT_TOKEN=$BOT
+TELEGRAM_ALLOWED_CHAT_IDS=$CHATS
 OPENAI_API_KEY=$OAI
 TRANSCRIBE_BACKEND=$BACKEND
 WHISPER_LOCAL_MODEL=$WMODEL

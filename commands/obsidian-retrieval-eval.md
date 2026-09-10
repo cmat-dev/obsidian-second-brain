@@ -4,6 +4,7 @@ category: meta
 triggers_en: ["evaluate retrieval", "how good is my vault search", "retrieval eval", "test vault search quality", "measure find quality"]
 triggers_es: ["evalúa la búsqueda", "qué tal funciona la búsqueda de mi vault", "evaluación de recuperación", "prueba la calidad de la búsqueda", "comprueba si encuentra bien mis notas"]
 triggers_pt: ["avalie a recuperação", "quão boa é a busca do meu vault", "avaliação de recuperação", "teste a qualidade da busca do vault", "meça a qualidade da busca"]
+triggers_zh: ["测试知识库搜索效果", "评估检索质量", "看看我的笔记好不好找", "测量语义搜索召回率", "检查搜索能不能找到正确笔记"]
 ---
 
 Use the obsidian-second-brain skill. Execute `/obsidian-retrieval-eval $ARGUMENTS`:
@@ -36,6 +37,6 @@ Measure, change one thing, measure again. That loop - not a guess about vector d
 
 ---
 
-**AI-first rule:** Every note created or updated by this command MUST follow `references/ai-first-rules.md` - `## For future Claude` preamble, rich frontmatter (`type`, `date`, `tags`, `ai-first: true`, plus type-specific fields), recency markers per external claim, mandatory `[[wikilinks]]` for every person/project/concept referenced, sources preserved verbatim with URLs inline, and confidence levels where applicable. The vault is for future-Claude retrieval - not human reading.
+**AI-first rule:** Every note created or updated by this command MUST follow `references/ai-first-rules.md` - `## For future agent` preamble, rich frontmatter (`type`, `date`, `tags`, `ai-first: true`, plus type-specific fields), recency markers per external claim, mandatory `[[wikilinks]]` for every person/project/concept referenced, sources preserved verbatim with URLs inline, and confidence levels where applicable. If that path does not resolve from your working directory, search upward for it; if you still cannot read it, say so before writing rather than producing a note that silently skips the rule. The vault is for future agent retrieval - not human reading.
 
 **Anti-fabrication:** Report the eval numbers exactly as the harness emits them - never round a miss into a hit or invent a recall figure. If the cases are few or the gold labels look weak, say so rather than overclaiming. See the anti-fabrication and search-completeness hard rules in `references/ai-first-rules.md`.

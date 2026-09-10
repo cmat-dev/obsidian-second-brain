@@ -66,20 +66,16 @@ _ask_emit_skills() {
     [[ -z "$category" ]] && category="other"
     [[ -z "$desc" ]] && desc="Run the $name command of the obsidian-second-brain skill."
     # Strip any surrounding quotes the source may carry.
-    desc="${desc#\"}"; desc="${desc%\"}"; desc="${desc#\'}"; desc="${desc%\'}"
+    desc="$(strip_quotes "$desc")"
 
     # Fold English triggers into the description for implicit selection.
     if [[ -n "$triggers" ]]; then
-      trig_clean="$(echo "$triggers" | tr -d '[]"' | sed 's/,/, /g; s/  */ /g; s/^ *//; s/ *$//')"
+      trig_clean="$(format_triggers "$triggers")"
       [[ -n "$trig_clean" ]] && desc="$desc Triggers: $trig_clean."
     fi
 
     # Encode the selection policy - the one lever these harnesses read.
-    if [[ "$trigmode" == "proactive" ]]; then
-      desc="$desc Use proactively: trigger this whenever the conversation produces something worth capturing, without waiting to be asked."
-    else
-      desc="$desc Use only when the user explicitly asks for it."
-    fi
+    desc="$(with_trigger_policy "$desc" "$trigmode")"
 
     mkdir -p "$dst/$name"
     out="$dst/$name/SKILL.md"
@@ -105,7 +101,11 @@ _ask_emit_skills() {
     } > "$out"
 
     rewrite_tool_neutral "$out"
-    _ask_rewrite_skill_root "$out"
+    rewrite_skill_root "$out" "$ASK_CORE_PATH"
+    # Bare `references/...` paths in command prose resolve against the installed
+    # obsidian-core skill, not the harness CWD. ASK_CORE_PATH already carries the
+    # leading dot, so strip it for the platform-dir argument.
+    rewrite_platform_paths "$out" "${ASK_CORE_PATH#.}"
   done
 }
 
@@ -127,15 +127,6 @@ the absolute path to the installed \`${ASK_CORE}\` directory instead.
 EOF
 }
 
-# Rewrite the SKILL_ROOT placeholder (the Claude "Skill root" given at session
-# start) to the installed obsidian-core location. Uses '{}' delimiters so the
-# slashes in the path need no escaping.
-_ask_rewrite_skill_root() {
-  local file="$1"
-  [[ -f "$file" ]] || return 0
-  perl -i -pe "s{SKILL_ROOT}{${ASK_CORE_PATH}}g" "$file"
-}
-
 # Emit the shared obsidian-core skill: a SKILL.md (so skills.sh treats it as an
 # installable skill and lands it in .agents/skills/obsidian-core/) plus the
 # references/, scripts/, and pyproject.toml the command skills call into.
@@ -149,11 +140,7 @@ _ask_emit_core() {
     cp -R "$src/references/." "$dst/references/"
   fi
   # scripts/ + pyproject.toml (self-contained uv project)
-  if [[ -d "$src/scripts" ]]; then
-    mkdir -p "$dst/scripts"
-    cp -R "$src/scripts/." "$dst/scripts/"
-  fi
-  [[ -f "$src/pyproject.toml" ]] && cp "$src/pyproject.toml" "$dst/pyproject.toml"
+  copy_scripts_with_project "$src/scripts" "$dst/scripts"
 
   # SKILL.md - carries the discovery frontmatter; instructs the agent not to
   # invoke it directly. metadata.category is spec-minimal like the rest.
@@ -172,7 +159,12 @@ not a task skill - do not run it on its own.
 
 - \`references/\` - shared specs. \`references/ai-first-rules.md\` is the canonical,
   non-negotiable vault-write spec; \`vault-schema.md\`, \`folder-map.md\`, and
-  \`freshness-policy.md\` back the other skills.
+  \`freshness-policy.md\` back the other skills. These paths are relative to the
+  install root, which is load-bearing: if one does not resolve from your working
+  directory, search upward for it, and say so before writing if you still cannot
+  read it. Every command skill also embeds the AI-first spec inline, so the rule
+  survives an unreachable path - but an unreachable path must never pass in
+  silence.
 - \`scripts/\` - Python helpers for the research toolkit and vault health. The
   command skills invoke them as
   \`uv run --directory ${ASK_CORE_PATH} -m scripts.research.<name> ...\`
@@ -188,6 +180,13 @@ EOF
 
 _ask_emit_install_hint() {
   local dst="$1"
+  # Computed, not hardcoded. The previous literals (43 / 44) went stale on every
+  # command added or excluded, so the documented verification step told the user
+  # to expect a number the build does not produce - worse than no check.
+  local ASK_CMD_COUNT=0 f
+  for f in "$(dirname "$dst")"/../commands/*.md; do :; done
+  ASK_CMD_COUNT="$(find "$dst/$ASK_SKILLS_DIR" -mindepth 1 -maxdepth 1 -type d \
+                    ! -name "$ASK_CORE" 2>/dev/null | wc -l | tr -d ' ')"
   cat > "$dst/INSTALL.md" <<EOF
 # Install as Agent Skills (Antigravity / Codex CLI / OpenCode)
 
@@ -197,10 +196,29 @@ open \`.agents/skills/\` standard - Google **Antigravity**, OpenAI **Codex CLI**
 automatically: each skill's name and description stay visible, and the full body
 loads only when the skill is selected (progressive disclosure).
 
-The tree contains \`skills/<name>/SKILL.md\` (43 command skills) plus the shared
+The tree contains \`skills/<name>/SKILL.md\` (${ASK_CMD_COUNT} command skills) plus the shared
 \`skills/${ASK_CORE}/\` engine skill (references, scripts, pyproject). There is
 deliberately **no SKILL.md at the tree root** - a root SKILL.md shadows the
 nested skills during discovery.
+
+## Where you start the harness is load-bearing
+
+Start your harness **from the vault root**, or have the vault under git. This is
+a requirement, not a convenience:
+
+- Codex CLI walks up to the **git root** looking for \`.agents/skills\`. A
+  git-backed vault therefore works from any subfolder.
+- A plain Obsidian vault is not a git repo. In that case, opening the harness in
+  any subfolder registers **zero** skills - no warning, no error, the skill list
+  is simply empty.
+- The \`.agents/skills/${ASK_CORE}/references/\` paths the skills cite are
+  relative to this root too. Start elsewhere and the AI-first spec is a dead
+  path, which is why every skill now says so out loud instead of silently
+  skipping the rule.
+
+If you keep your vault outside git and want to work from subfolders, run
+\`git init\` in the vault root once. Reported by @Palo-Alto-AI-Research-Lab on
+codex-cli 0.144.4 (issue #171).
 
 ## Option A - skills.sh (recommended)
 
@@ -209,7 +227,7 @@ GitHub-as-registry installer that writes one shared \`.agents/skills/\` tree all
 three harnesses read. Run from your vault root:
 
 \`\`\`bash
-# preview what would install (should list 44: 43 commands + ${ASK_CORE})
+# preview what would install (should list $((ASK_CMD_COUNT + 1)): ${ASK_CMD_COUNT} commands + ${ASK_CORE})
 npx skills add ./dist/agent-skills --list
 
 # project-scope install for one or more harnesses (one physical tree serves all)
@@ -290,11 +308,7 @@ Agent Skills. When it is:
 2. Read \`_CLAUDE.md\` at the vault root first, if present, for vault conventions.
 3. Prefer the installed \`.agents/skills/\` skills for vault actions (save, capture,
    log, decide, research, health, ...).
-4. Treat \`.agents/skills/${ASK_CORE}/references/ai-first-rules.md\` as
-   non-negotiable for every note you write: \`## For future Claude\` preamble, rich
-   frontmatter (\`type\`, \`date\`, \`tags\`, \`ai-first: true\`), \`[[wikilinks]]\` for
-   every person/project/concept, recency markers per external claim, sources
-   verbatim, confidence levels where applicable.
+$(emit_ai_first_rule "${ASK_CORE_PATH}/references/ai-first-rules.md" 4)
 \`\`\`
 EOF
 }

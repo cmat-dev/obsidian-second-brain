@@ -40,7 +40,7 @@ To wire it: `bash scripts/setup.sh "/path/to/vault"` or run `/obsidian-setup`.
 Use standard file tools (Read, Write, Edit, Glob) against the vault path. The vault is plain markdown, so every operation in this skill works this way with no setup. This is the normal path in Claude Code - the commands below use these tools directly.
 
 **Method B - MCP server (optional, mainly for non-Claude-Code clients):**
-This repo ships its own MCP server at `integrations/obsidian-mcp-server/` that exposes the vault as tools (`obsidian_search`, `obsidian_read_note`, `obsidian_save_note`, `obsidian_capture`, plus curator tools). It exists so other MCP clients - Hermes Agent, Claude Desktop, Cursor - can use the vault as a knowledge layer; in Claude Code itself, Method A is simpler and preferred. If those `obsidian_*` tools happen to be available in your client, you may use them instead of raw file tools. Setup lives in `integrations/obsidian-mcp-server/README.md` (it is `uv run --with mcp python .../server.py` with `OBSIDIAN_VAULT_PATH` set, not an `npx` package).
+This repo ships its own MCP server at `integrations/obsidian-mcp-server/` that exposes the vault as tools (`obsidian_search`, `obsidian_read_note`, `obsidian_save_note`, `obsidian_capture`, plus curator tools). It exists so other MCP clients - Hermes Agent, Claude Desktop, Cursor - can use the vault as a knowledge layer; in Claude Code itself, Method A is simpler and preferred. If those `obsidian_*` tools happen to be available in your client, you may use them instead of raw file tools. Setup lives in `integrations/obsidian-mcp-server/README.md` (it is `uv run --no-project --with 'mcp<2' python .../server.py` with `OBSIDIAN_VAULT_PATH` set, not an `npx` package). Since the bookkeeping change, every write through the server also validates the note, adds the index entry, appends the operation-log line, and runs `OBSIDIAN_POST_WRITE_CMD` when set - see `integrations/obsidian-mcp-server/README.md`, "Bookkeeping after writes".
 
 ### 1. First time in a vault → read `_CLAUDE.md`
 
@@ -102,17 +102,17 @@ See `references/vault-schema.md` for full structural details.
 ## Core Operating Principles
 
 ### AI-first vault rule (applies to every note)
-The vault is designed for **future-Claude** to read and reason over, not for human review. Every note Claude writes - across all 45 commands - must follow `references/ai-first-rules.md`:
+The vault is designed for **future agent** to read and reason over, not for human review. Every note Claude writes - across all 46 commands - must follow `references/ai-first-rules.md`:
 
 1. **Self-contained context** - each note explains itself; don't rely on backlinks alone
-2. **"For future Claude" preamble** - 2-3 sentence summary so Claude can decide relevance in 10 seconds
+2. **"For future agent" preamble** - 2-3 sentence summary so any compatible agent can decide relevance in 10 seconds
 3. **Rich, consistent frontmatter** - `type`, `date`, `tags`, `ai-first: true`, plus type-specific fields (see `ai-first-rules.md` for schemas per note type)
-4. **Recency markers per claim** - "Mem0 raised $24M (as of 2026-04, mem0.ai)" so future-Claude knows what to verify
+4. **Recency markers per claim** - "Mem0 raised $24M (as of 2026-04, mem0.ai)" so future agent knows what to verify
 5. **Sources preserved verbatim** - every external claim has its source URL inline
 6. **Cross-links mandatory** - every person/project/idea/decision uses `[[wikilinks]]`
 7. **Confidence levels** - `stated | high | medium | speculation` where applicable
 
-This rule lives in `_CLAUDE.md` Section 0 of every vault using this skill, and in `references/ai-first-rules.md` (the canonical specification with frontmatter schemas + preamble templates per note type).
+This rule lives in `_CLAUDE.md` Section 0 of every vault using this skill, and in `references/ai-first-rules.md` (the canonical specification with frontmatter schemas + preamble templates per note type). That path is relative to the install root, which is load-bearing: if it does not resolve from your working directory, search upward for it, and if you still cannot read it, say so before writing rather than producing a note that silently skips the rule. The seven requirements above are the floor and apply whether or not the spec is reachable.
 
 ### Never create in isolation
 Every write operation must ask: *where else does this belong?*
@@ -267,7 +267,7 @@ See `references/write-rules.md` for the complete guide. Summary:
 
 - **Links**: Use `[[Note Name]]` for internal links. Always link to people, projects, and jobs mentioned in a note.
 - **Dates**: ISO format (`YYYY-MM-DD`) in frontmatter. Human format (`March 24`) in body text.
-- **Naming**: `YYYY-MM-DD - Title.md` for dated notes. `Title.md` for evergreen notes. No special characters except `-` (em dash).
+- **Naming**: `YYYY-MM-DD - Title.md` for dated notes. `Title.md` for evergreen notes. No special characters except the ASCII hyphen `-`. Never an em dash (U+2014) or en dash (U+2013) in a filename: link matching compares stems literally, so `2026-07-26 - Title.md` will not resolve a `[[2026-07-26 - Title]]` link, producing an orphan and a dangling link in the same write. The write-time validator checks file CONTENT, not filenames, so nothing catches this for you.
 - **Status values**: `active` / `planning` / `completed` / `archived` / `on-hold` for projects. `in-progress` / `done` / `waiting` for tasks.
 - **Kanban**: Items follow the format `- [ ] 🔴 **Title** · @{YYYY-MM-DD}\n\tDescription [[Link]]`
 
@@ -325,7 +325,7 @@ Completed items move to the `## ✅ Done` column with a strikethrough: `- [x] ~~
 
 ### Run vault health check
 ```bash
-python scripts/vault_health.py --path ~/path/to/vault
+uv run --directory "SKILL_ROOT" scripts/vault_health.py --path ~/path/to/vault
 ```
 Reports: duplicate notes, orphaned files (no incoming links), stale tasks (overdue), empty folders, broken links, notes missing frontmatter.
 
@@ -338,6 +338,20 @@ Proactively suggest running this when the user says the vault feels messy, notes
 These slash commands can be used in any Claude surface. Each one is smart - it reads context, searches before writing, and propagates everywhere changes belong.
 
 **Name matching:** If a name argument has a typo or is approximate, search the vault for the closest match, show what was found, and confirm with the user before proceeding. Never silently create a note with a misspelled name.
+
+**Command selection: the longest matching trigger wins.** Several triggers are prefixes of longer, more specific ones, so a shorter match is not evidence that the shorter command is the right one. Always check whether a longer trigger also matches before choosing.
+
+The five collisions that exist today, with the correct routing:
+
+| The user says | Route to | Not to | Why it matters |
+|---|---|---|---|
+| "remind me every month...", "track a recurring..." | `/obsidian-recurring` | `/obsidian-task` | A one-shot card never recurs, which is the whole point of the request |
+| "save this idea", "capture this" | `/obsidian-capture` | `/obsidian-save` | One small idea note, not a multi-subagent sweep across people, projects, tasks, decisions and boards |
+| "save this person", "remember this person" | `/obsidian-person` | `/obsidian-save` | A person note, not a full conversation sweep |
+| "synthesize what I know about X" | `/vault-deep-synthesis` | `/obsidian-synthesize` | One topic cross-referenced, not a whole-vault pattern scan |
+| "find unnamed patterns" | `/obsidian-emerge` | `/obsidian-synthesize` | Surfaces patterns for the user, does not write synthesis pages unasked |
+
+When two commands still look equally plausible after applying the rule, ask which one rather than guessing - the blast radii differ enormously, and `/obsidian-save` in particular writes across many files.
 
 ---
 
@@ -547,11 +561,12 @@ If a project name argument is given, shows deep context for that one project onl
 **Runs a vault health check and summarizes findings.**
 
 Steps:
-1. Run: `python scripts/vault_health.py --path ~/path/to/vault --json`
+1. Run: `uv run --directory "SKILL_ROOT" scripts/vault_health.py --path ~/path/to/vault --json`
 2. Parse the JSON output and split findings into categories
 3. Spawn parallel subagents to handle each category simultaneously:
    - **Links agent**: verify broken links, attempt to resolve them
    - **Duplicates agent**: confirm duplicates are truly the same concept, not just similar names
+   - **Taxonomy agent**: only fires when `<vault>/_meta/taxonomy.md` exists (format in `references/taxonomy-format.md`) - opt-in, zero findings without it. `tag_synonym` (a tag is a known synonym of a canonical tag) offers a per-note rename to the canonical form with confirmation; `tag_not_in_taxonomy` (a tag matches neither a canonical tag nor a synonym) is informational only, never auto-fixed
    - **Frontmatter agent**: identify notes missing required fields by type
    - **Staleness agent**: check overdue tasks and unfilled template syntax
    - **Orphans agent**: check orphaned notes and empty folders
@@ -562,12 +577,20 @@ Steps:
    - **Typed-edge lint agent**: run `python scripts/link_graph.py --path <vault> --lint` - validates the `relations:` typed-edge graph (Rule 6 § Typed edges in `references/ai-first-rules.md`): contradiction cycles (critical), unknown types / dangling targets / self-edges (warning), missing inverse edges (info). Returns zero findings on vaults that use no typed edges yet
 4. Merge agent results and group by severity:
    - 🔴 Critical: broken links, unfilled template syntax, contradictions, typed-edge contradiction cycles
-   - 🟡 Warning: duplicates, stale tasks, missing frontmatter, stale claims, concept gaps, typed-edge problems (unknown type, dangling target, self-edge)
-   - ⚪ Info: orphaned notes, empty folders, missing inverse edges
+   - 🟡 Warning: duplicates, stale tasks, missing frontmatter, stale claims, concept gaps, typed-edge problems (unknown type, dangling target, self-edge), tag-synonym findings
+   - ⚪ Info: orphaned notes, empty folders, missing inverse edges, tags not in the taxonomy
 5. Present a clean summary with counts per category
 6. For safe fixes (missing frontmatter, obvious duplicates, creating pages for concept gaps), offer to fix them automatically
 7. For destructive fixes (archiving, merging, resolving contradictions), list them and ask for explicit confirmation before touching anything
-8. Append to `log.md` with severity counts
+8. Append an operation-log entry with severity counts - if `Logs/` exists write the entry to `Logs/YYYY-MM-DD.md`, otherwise append to `log.md` (SKILL.md's own rule: the root `log.md` is a pointer file in v0.9+ vaults, never an entry target)
+
+---
+
+### `/obsidian-reindex`
+
+**Refreshes the semantic search index and makes its coverage visible.** Full steps in `commands/obsidian-reindex.md` (the source of truth).
+
+In short: reads the vault path from `_CLAUDE.md`, reports the current `index_coverage`, runs the existing incremental `semantic_search.py --build`, and reports coverage again with the builder's new, cached, excluded, degraded, and dropped counts. A backend failure stops the flow and is shown to the user; it is never presented as a successful refresh. The command updates only `.obsidian-semantic-index.json`, not Markdown notes.
 
 ---
 
@@ -576,6 +599,21 @@ Steps:
 **Measures how well vault search actually finds the right note - so improving retrieval is a number, not a hunch.**
 
 Hybrid command backed by `scripts/eval/retrieval_eval.py`, which reuses the REAL search engine (`integrations/obsidian-mcp-server/vault_ops.py`, the term-frequency, title-weighted ranking behind `/obsidian-find` and the MCP connector). It bootstraps its own eval set from the vault (an LLM writes a question per sampled note, avoiding the note's title words so it tests retrieval not string-match; the note is the gold answer), then scores recall@1/3/5/10 and MRR and lists the failures - misses and notes buried below #3, naming which note wrongly ranked #1. Claude interprets the numbers, turns failures into ranked retrieval fixes (each a hypothesis to re-measure on the same cases), and optionally writes an AI-first baseline note. Generated cases hold private note paths and are gitignored. The first run on a 1,000+ note vault scored **0% recall@10** on paraphrased questions (long `raw/` transcripts and `log.md` dominate term-frequency ranking) - proving the cheap structural fixes (exclude `raw/`, weight by `type:`) should be measured before reaching for a vector index.
+
+---
+
+### `/obsidian-merge <canonical> <retired> | --from-health`
+
+**Merges two near-duplicate notes that `/obsidian-health` found and stopped at. Dry run by default; the retired note becomes a redirect, never a deletion.**
+
+Health is read-only by contract, so the merge was the manual step everyone skipped and the same pairs came back every run. `scripts/merge_notes.py` does the mechanical half; you compose the merged body, because deciding what actually contradicts between two notes is judgment.
+
+Steps:
+1. Resolve the pair: two paths from the user (first survives, second retires; confirm if the richer note is the second), or `--from-health` to list the 2-file duplicate groups from a live `vault_health.check_duplicates()` run. A group of 3+ is never auto-paired.
+2. Read both notes in full. Compose the merged body per `references/ai-first-rules.md`: one `## For future agent` preamble naming both originals, both provenance trails kept, real contradictions listed with dates rather than resolved, every still-relevant `[[wikilink]]` from both sides carried over. Write it to a scratch file.
+3. Dry run: `uv run --directory "SKILL_ROOT" scripts/merge_notes.py --path <vault> --canonical <a> --retire <b> --merged-body-file <scratch>`. It prints the frontmatter conflicts (canonical wins, the retired value goes under `merged_from:`; list fields such as `tags` and `aliases` are unioned instead), the alias folded in, and the full text of both proposed notes. Show it verbatim.
+4. Ask for explicit confirmation, then re-run the identical command with `--apply`. Dry run and apply share one `compute_merge()`, so what was previewed is what gets written.
+5. Report which note survived, which became `type: redirect` (schema in `references/ai-first-rules.md`, Documented exceptions), the conflicts, and the contradictions the body documents. Log `merge | <retired> -> <canonical>` per the operation-log convention.
 
 ---
 
@@ -595,7 +633,7 @@ Steps:
    - **Clear winner**: rewrite the outdated page, add a History section noting what changed
    - **Ambiguous**: create `wiki/decisions/Conflict - Topic.md` with both sides, mark `status: open`
    - **Evolution**: update the page to current state with historical context
-5. Rebuild affected `index.md` sections, append to `log.md`, update daily note
+5. Rebuild affected `index.md` sections, append an operation-log entry (if `Logs/` exists write the entry to `Logs/YYYY-MM-DD.md`, otherwise append to `log.md` (SKILL.md's own rule: the root `log.md` is a pointer file in v0.9+ vaults, never an entry target)), update daily note
 
 ---
 
@@ -658,7 +696,7 @@ Backed by `scripts/link_graph.py` (deterministic link extraction - no whole-vaul
 
 **Scaffolds a new obsidian-second-brain command through a short interview - no markdown or frontmatter editing.**
 
-A guided conversation (intent, name, category, trigger phrases, behavior steps, AI-first compliance, external APIs) writes a fully-formed `commands/<name>.md` that the build pipeline picks up on the next `bash scripts/build.sh`, flowing into all seven platform builds. The optional seed pre-fills suggestions. Every command created this way lands AI-first-compliant by construction. (This is the command that creates commands; it does not run on itself.)
+A guided conversation (intent, name, category, trigger phrases, behavior steps, AI-first compliance, external APIs) writes a fully-formed `commands/<name>.md` that the build pipeline picks up on the next `bash scripts/build.sh`, flowing into all eight platform builds. The optional seed pre-fills suggestions. Every command created this way lands AI-first-compliant by construction. (This is the command that creates commands; it does not run on itself.)
 
 ---
 
@@ -678,10 +716,28 @@ Steps:
    - **Ideas agent**: create or append to Ideas/ for new concepts
    - **Knowledge agent**: create or update Knowledge/ notes for factual claims and frameworks
 7. Update `index.md` with all newly created notes
-8. Append to `log.md`: `## [YYYY-MM-DD] ingest | Source Title (type) - X created, Y updated`
+8. Append an operation-log entry: if `Logs/` exists write `**HH:MM** - ingest | Source Title (type) - X created, Y updated` to `Logs/YYYY-MM-DD.md`; otherwise append `## [YYYY-MM-DD] ingest | Source Title (type) - X created, Y updated` to `log.md`
 9. Update today's daily note with an ingest summary
 
 A single ingest should touch 5-15 files. Compile knowledge once, distribute everywhere.
+
+---
+
+### `/obsidian-decide [topic] [--formal]`
+
+**Records decisions at two depths.** Default mode captures the decisions made in a conversation as dated one-liners appended to the relevant project notes' `## Key Decisions` sections (and the daily note) - for the steady stream of choices made while working. `--formal` (or leading with `adr`) instead writes one full Architecture Decision Record - Decision / Context / Options Considered / Rationale / Consequences / Related - to the decisions folder (resolved per `references/folder-map.md`: wiki-style `wiki/decisions/`, Obsidian-style `Knowledge/`), links it from the project's Key Decisions and `index.md`, and logs it. Use the formal mode for a structural or directional decision worth a real writeup; `python scripts/mine_commit_decisions.py` surfaces decision-shaped commits as ADR candidates.
+
+The vault knows why it's structured the way it is - when a future session asks "why?", the formal record answers. `/obsidian-graduate`, `/obsidian-health` structural fixes, and folder reorganizations may offer to write a formal record; they offer, they don't force.
+
+(Consolidated: the former standalone `/obsidian-adr` is now `/obsidian-decide --formal`; its triggers still route here.)
+
+---
+
+### `/obsidian-learn [recent|all|topic]`
+
+**Reviews the lessons scattered across the vault and turns them into a living rulebook.**
+
+Scans daily notes, dev logs, ADRs, and auto-generated pattern reports for lessons, mistakes, and wins, then classifies each as active, stale, superseded, or a promotion candidate (appeared 3+ times - worth becoming a permanent rule in `_CLAUDE.md`). Default scope is the last 30 days (`all` for the whole vault, or a named topic). Writes a Learnings Review to `wiki/concepts/YYYY-MM-DD - Learnings Review.md` and offers to promote candidates or archive stale lessons with confirmation. Lessons that are not reviewed do not compound.
 
 ---
 
@@ -823,14 +879,6 @@ Answers "what is worth doing next" from vault material. Distinct from `/obsidian
 
 ---
 
-### `/obsidian-learn [recent|all|topic]`
-
-**Reviews the lessons scattered across the vault and turns them into a living rulebook.**
-
-Scans daily notes, dev logs, ADRs, and auto-generated pattern reports for lessons, mistakes, and wins, then classifies each as active, stale, superseded, or a promotion candidate (appeared 3+ times - worth becoming a permanent rule in `_CLAUDE.md`). Default scope is the last 30 days (`all` for the whole vault, or a named topic). Writes a Learnings Review to `wiki/concepts/YYYY-MM-DD - Learnings Review.md` and offers to promote candidates or archive stale lessons with confirmation. Lessons that are not reviewed do not compound.
-
----
-
 ## Context Engine
 
 ### `/obsidian-world`
@@ -859,21 +907,11 @@ If `index.md` doesn't exist, offer to run `/obsidian-init` to generate it.
 
 ---
 
-### `/obsidian-decide [topic] [--formal]`
-
-**Records decisions at two depths.** Default mode captures the decisions made in a conversation as dated one-liners appended to the relevant project notes' `## Key Decisions` sections (and the daily note) - for the steady stream of choices made while working. `--formal` (or leading with `adr`) instead writes one full Architecture Decision Record - Decision / Context / Options Considered / Rationale / Consequences / Related - to the decisions folder (resolved per `references/folder-map.md`: wiki-style `wiki/decisions/`, Obsidian-style `Knowledge/`), links it from the project's Key Decisions and `index.md`, and logs it. Use the formal mode for a structural or directional decision worth a real writeup; `python scripts/mine_commit_decisions.py` surfaces decision-shaped commits as ADR candidates.
-
-The vault knows why it's structured the way it is - when a future session asks "why?", the formal record answers. `/obsidian-graduate`, `/obsidian-health` structural fixes, and folder reorganizations may offer to write a formal record; they offer, they don't force.
-
-(Consolidated: the former standalone `/obsidian-adr` is now `/obsidian-decide --formal`; its triggers still route here.)
-
----
-
 ## Research Commands
 
 Seven commands that pull external knowledge into the vault - X posts, X discourse, web research with citations, vault-grounded synthesis, YouTube videos, and podcast episodes (plus `/obsidian-ingest` above for arbitrary URLs, PDFs, audio, and screenshots). All output AI-first notes per the vault's Section 0 rule (preamble, rich frontmatter, recency markers, mandatory wikilinks, sources verbatim).
 
-**Setup:** API keys live at `~/.config/obsidian-second-brain/.env`. Run `install.sh` and answer "y" to the research toolkit prompt, or copy `.env.example` manually. xAI Grok and Perplexity keys are required; YouTube key is optional (transcripts work without it).
+**Setup:** API keys live at `~/.config/obsidian-second-brain/.env`. Run `install.sh` and answer "y" to the research toolkit prompt, or copy `.env.example` manually. The xAI Grok key is required for `/x-read` and `/x-pulse`. Perplexity is optional: with no `PERPLEXITY_API_KEY` set, `/research` and `/research-deep` fall back to free key-less sources automatically, and `--free` forces that path even when a key exists (`--academic` restricts it to scholarly sources). YouTube key is optional; transcripts work without it. Never tell a user a research command is unavailable because they lack a Perplexity key.
 
 **Stack:** Python 3.10+ with `uv`. Install deps via `uv sync` from the repo root.
 
@@ -902,7 +940,7 @@ Steps:
 2. Run `uv run -m scripts.research.x_pulse "<topic>"`
 3. Show the pulse output verbatim
 4. **Default save: auto-saves** to `Research/X-pulse/YYYY-MM-DD - <slug>.md` (AI-first format)
-5. Append one-line entry to `log.md`
+5. Append a one-line operation-log entry - if `Logs/` exists write the entry to `Logs/YYYY-MM-DD.md`, otherwise append to `log.md` (SKILL.md's own rule: the root `log.md` is a pointer file in v0.9+ vaults, never an entry target)
 
 Plain English: "what's hot on X about AI", "X pulse on vibe coding", "what should I post today on AI automation".
 
@@ -1004,7 +1042,6 @@ Spotify URLs are not supported (DRM blocks audio + transcript access). If no tra
 uv run python -c "from scripts.research.lib.usage import month_total; t,c = month_total(); print(f'\${t:.2f} across {c} calls')"
 ```
 
-No usage tracking on Perplexity calls (intentional - user opted out).
 
 No hard caps. No blocking. No per-call confirmation prompts. Trust the user to monitor.
 
@@ -1052,13 +1089,20 @@ Phase 1 - Close the day:
 - Move any completed kanban tasks to Done.
 
 Phase 2 - Reconcile:
-- Scan wiki/entities/ for outdated roles, companies, or descriptions that conflict with newer daily notes.
-- Scan wiki/concepts/ for claims contradicted by recently ingested sources.
-- Auto-resolve clear winners. Flag ambiguous ones in wiki/decisions/.
+- First resolve the entities, concepts, and decisions folders per references/folder-map.md: the vault's _CLAUDE.md Folder Map wins,
+  else wiki-style wiki/entities/ + wiki/concepts/ + wiki/decisions/, else Obsidian-style People/ + Knowledge/ (and Ideas/) + Knowledge/.
+  A resolved folder that does not exist is a skip, not an error. Never scan a hardcoded wiki/ path on a vault with no wiki/ folder -
+  unattended, that is three tool failures a night with nothing to show for them.
+- Scan the entities folder for outdated roles, companies, or descriptions that conflict with newer daily notes.
+- Scan the concepts folder for claims contradicted by recently ingested sources.
+- Flag EVERY contradiction as a `type: conflict` note with `status: open` in the decisions folder. Do NOT rewrite any existing page.
+  (Resolving a contradiction means rewriting the outdated note, which is destructive and irreversible while the user sleeps. It also
+  contradicts the constraint below. Leave the resolve step to an interactive /obsidian-reconcile run, matching the health agent's
+  report-only posture.)
 
 Phase 3 - Synthesize:
 - Scan sources ingested today and yesterday. Find concepts that appear in 2+ unrelated sources.
-- If patterns found: create wiki/concepts/Synthesis - Title.md with evidence and interpretation.
+- If patterns found: create `Synthesis - Title.md` in the concepts folder resolved in Phase 2, with evidence and interpretation.
 
 Phase 4 - Heal:
 - Find notes created today with no incoming links. Add links from relevant existing pages.
@@ -1066,7 +1110,7 @@ Phase 4 - Heal:
 - Rebuild index.md to reflect today's changes.
 
 Phase 5 - Log:
-- Append to log.md: ## [YYYY-MM-DD] nightly | End of day + X reconciled, Y synthesized, Z orphans linked
+- Append an operation-log entry: if `Logs/` exists write `**HH:MM** - nightly | End of day + X flagged, Y synthesized, Z orphans linked` to `Logs/YYYY-MM-DD.md`; otherwise append `## [YYYY-MM-DD] nightly | ...` to `log.md`
 
 Do not ask questions. Do not fix anything destructive - only add, update, link. Save and stop.
 ```
@@ -1104,7 +1148,7 @@ Setup:
 
 Prompt to schedule:
 ```
-Read _CLAUDE.md. Run: python scripts/vault_health.py --path ~/path/to/vault --json
+Read _CLAUDE.md. Run: uv run --directory "SKILL_ROOT" scripts/vault_health.py --path ~/path/to/vault --json
 Parse the output. Write a health report to Knowledge/Vault Health YYYY-MM-DD.md
 summarizing findings by severity (critical, warning, info).
 Do not fix anything autonomously - only report.
@@ -1216,17 +1260,20 @@ A background agent that fires automatically whenever Claude compacts the convers
 
 ## Write-Time AI-First Validator (PostToolUse Hook)
 
-A non-blocking validator that fires after every `Write` or `Edit` on a markdown file inside the configured vault. It warns when the file fails the AI-first rule (missing required frontmatter, missing `## For future Claude` preamble, broken YAML) and surfaces the warning back to Claude on stderr so the agent can repair the note in the same turn.
+A non-blocking validator that fires after every `Write` or `Edit` on a markdown file inside the configured vault. It warns when the file fails the AI-first rule (missing required frontmatter, missing `## For future agent` preamble, broken YAML) and surfaces the warning back to the active agent on stderr so it can repair the note in the same turn.
 
 **What it checks:**
 1. The file has frontmatter delimiters (`--- ... ---`)
 2. No tabs in frontmatter (YAML requires spaces)
 3. Required AI-first fields present: `date:`, `type:`, `tags:`, `ai-first: true`
-4. The body contains a `## For future Claude` preamble (rule #2 of [`references/ai-first-rules.md`](references/ai-first-rules.md))
+4. The body contains a `## For future agent` preamble, or its Obsidian callout form `> [!info]- For future agent` (rule #2 of [`references/ai-first-rules.md`](references/ai-first-rules.md))
 
 **What it skips:**
 - Files outside `OBSIDIAN_VAULT_PATH`
-- Files under `raw/`, `templates/`, `_export/`, `.obsidian/`, `.git/`, `.trash/`
+- Files under `raw/`, `templates/`, `_export/`, `.obsidian/`, `.git/`, `.trash/`, `.claude/` (slash-command copies and settings are not notes - #249)
+- Payloads with no `tool_name` (nothing fired)
+
+**What it refuses to skip silently:** a payload that names a tool but carries no path key the hook knows (`file_path`, `filePath`, `notebook_path`). The matcher fired, so a write happened and went unchecked; the hook prints one stderr line naming the tool and the payload keys and exits 1 (non-blocking, the write stands) instead of exiting 0 and looking like "not a vault file".
 
 **Setup:**
 
@@ -1256,9 +1303,9 @@ A non-blocking validator that fires after every `Write` or `Edit` on a markdown 
    }
    ```
 
-**Behavior:** Non-blocking. If a write fails the AI-first rule, Claude sees the warning text on stderr (with one line per missing requirement) and can re-write the file in the same conversation turn to fix it. The original write is NOT reverted.
+**Behavior:** Non-blocking. If a write fails the AI-first rule, the hook emits JSON with `systemMessage` (shown to the user) and `decision`/`reason` plus `additionalContext` (fed to the model), one line per missing requirement, with the warning mirrored to stderr for logs. The agent can re-write the file in the same conversation turn to fix it. The original write is NOT reverted.
 
-**Other platforms (Codex CLI / Gemini CLI / OpenCode):** The hook script ships in `dist/<platform>/hooks/` for all platform builds, but each platform's hook system differs. Wiring it up beyond Claude Code is left to the platform's own configuration. See [`hooks/validate-ai-first.hook.yaml`](hooks/validate-ai-first.hook.yaml) for the platform-neutral spec.
+**Other platforms (Codex CLI / Gemini CLI / OpenCode):** The hook ships only in the `claude-code` build (`dist/claude-code/hooks/`); the other platform builds do not include a `hooks/` directory. If your platform has a post-write hook system, wire it yourself from the source repo: [`hooks/validate-ai-first.hook.yaml`](hooks/validate-ai-first.hook.yaml) is the platform-neutral spec and `hooks/validate-ai-first.sh` the implementation. Without host wiring, the AI-first rule is enforced by the command instructions alone.
 
 ---
 

@@ -4,6 +4,7 @@ category: vault
 triggers_en: ["projects overview", "project status", "what am I working on", "show projects"]
 triggers_es: ["resumen de proyectos", "estado de los proyectos", "en qué estoy trabajando", "muéstrame los proyectos"]
 triggers_pt: ["visão geral de projetos", "status dos projetos", "em que estou trabalhando", "mostre os projetos"]
+triggers_zh: ["看看所有项目的状态", "我现在在做哪些项目", "项目进展怎么样", "显示项目总览"]
 ---
 
 Use the obsidian-second-brain skill. Execute `/obsidian-projects $ARGUMENTS`:
@@ -84,6 +85,6 @@ If a project note doesn't exist yet but was discoverable via git (e.g. the repo 
 
 ---
 
-**AI-first rule:** Every vault write MUST follow `references/ai-first-rules.md` - `## For future Claude` preamble, rich frontmatter, `[[wikilinks]]` for every project referenced, recency markers on git-sourced facts (e.g. `(as of 2026-05-21, git log)`), sources noted inline.
+**AI-first rule:** Every vault write MUST follow `references/ai-first-rules.md` - `## For future agent` preamble, rich frontmatter, `[[wikilinks]]` for every project referenced, recency markers on git-sourced facts (e.g. `(as of 2026-05-21, git log)`), sources noted inline. If that path does not resolve from your working directory, search upward for it; if you still cannot read it, say so before writing rather than producing a note that silently skips the rule.
 
 **Anti-fabrication:** Search exhaustively before claiming any note, person, or file is absent - false absence is the most common failure mode - and never invent facts, entities, or dates (mark unknowns as `TBD`). See the anti-fabrication and search-completeness hard rules in `references/ai-first-rules.md`.

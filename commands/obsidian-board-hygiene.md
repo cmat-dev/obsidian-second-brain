@@ -4,6 +4,7 @@ category: vault
 triggers_en: ["clean up my board", "triage my board", "board hygiene", "archive stale tasks", "my board is a mess"]
 triggers_es: ["limpia mi tablero", "haz triaje de mi tablero", "ordena el tablero", "archiva las tareas viejas", "mi tablero es un desastre"]
 triggers_pt: ["limpe meu board", "faça a triagem do meu board", "higiene do board", "arquive tarefas paradas", "meu board está uma bagunça"]
+triggers_zh: ["整理我的看板", "清理过期任务", "帮我归档看板上的旧任务", "我的看板太乱了", "批量梳理看板"]
 ---
 
 Use the obsidian-second-brain skill. Execute `/obsidian-board-hygiene [board]`:
@@ -20,6 +21,6 @@ A board only means something if "This Week" means this week. Run this whenever a
 
 ---
 
-**AI-first rule:** Board files follow the kanban exception in `references/ai-first-rules.md`: `kanban-plugin` frontmatter, NO `## For future Claude` heading (the plugin would render it as a phantom column). Every NON-board note this command creates or updates (task notes, project notes) MUST follow the full rule - preamble, rich frontmatter (`type`, `date`, `tags`, `ai-first: true`), `[[wikilinks]]`, sources verbatim.
+**AI-first rule:** Board files follow the kanban exception in `references/ai-first-rules.md`: `kanban-plugin` frontmatter, NO `## For future agent` heading (the plugin would render it as a phantom column). Every NON-board note this command creates or updates (task notes, project notes) MUST follow the full rule - preamble, rich frontmatter (`type`, `date`, `tags`, `ai-first: true`), `[[wikilinks]]`, sources verbatim. If that path does not resolve from your working directory, search upward for it; if you still cannot read it, say so before writing rather than producing a note that silently skips the rule.
 
 **Anti-fabrication:** Search exhaustively before claiming any note, person, or file is absent - false absence is the most common failure mode - and never invent facts, entities, or dates (mark unknowns as `TBD`). See the anti-fabrication and search-completeness hard rules in `references/ai-first-rules.md`.

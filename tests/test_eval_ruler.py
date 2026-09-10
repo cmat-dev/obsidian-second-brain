@@ -9,7 +9,7 @@ straightened ruler without needing Ollama.
 
 from __future__ import annotations
 
-import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -20,8 +20,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "integrations" / "obsidian-mcp-server"))
 sys.path.insert(0, str(REPO_ROOT / "scripts" / "eval"))
 
-import vault_ops  # noqa: E402
 import retrieval_eval as rev  # noqa: E402
+import vault_ops  # noqa: E402
 
 
 @pytest.fixture()
@@ -47,7 +47,11 @@ def test_semantic_toggle_reaches_fuse(vault, monkeypatch):
     seen = {}
     real = vault_ops._semantic_fuse
 
-    def spy(query, lexical, v, limit, enabled=None):
+    # **_ absorbs arguments search passes that this double does not assert on
+    # (currently `scanned`, the already-walked path list the staleness check
+    # reuses). Pinning the full signature here made a test double a second
+    # definition of the production signature.
+    def spy(query, lexical, v, limit, enabled=None, **_):
         seen["enabled"] = enabled
         return real(query, lexical, v, limit, enabled=enabled)
 
@@ -133,6 +137,10 @@ def test_generate_refuses_to_overwrite_baseline(tmp_path):
     cases.write_text('{"q": "old question", "gold": ["topic.md"]}\n', encoding="utf-8")
 
     env = {"OBSIDIAN_VAULT_PATH": str(vault), "PATH": "/usr/bin:/bin"}
+    if os.name == "nt":
+        # Path.home() reads USERPROFILE on Windows (HOME is ignored) and raises
+        # "Could not determine home directory" without it.
+        env["USERPROFILE"] = str(tmp_path)
     cmd = [sys.executable, "scripts/eval/retrieval_eval.py",
            "--generate", "1", "--cases", str(cases)]
     result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True,

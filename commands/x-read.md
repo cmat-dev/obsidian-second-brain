@@ -4,6 +4,7 @@ category: research
 triggers_en: ["read this x post", "deep read this tweet", "analyze this tweet", "read this thread"]
 triggers_es: ["léeme este post de x", "profundiza en este tweet", "analiza este tweet", "léeme este hilo"]
 triggers_pt: ["leia este post do x", "leitura profunda deste tweet", "analise este tweet", "leia esta thread"]
+triggers_zh: ["读一下这条 X 帖子", "深入分析这条推文", "这条推文讲了什么", "梳理一下这串推文"]
 ---
 
 Use the obsidian-second-brain skill. Execute `/x-read [url]`:
@@ -21,7 +22,7 @@ Use the obsidian-second-brain skill. Execute `/x-read [url]`:
 
 5. If the user asks to save: write an AI-first note to `Research/X-reads/YYYY-MM-DD - <slug>.md` in the vault, following the AI-first vault rule (Section 0 of `_CLAUDE.md`):
    - Frontmatter: `date`, `time`, `type: x-read`, `ai-first: true`, `post-url`, `post-author` (if known), `key-claims` (list), `tags`, `related-people` (wikilinks for any @ handles that map to known people in the vault), `cost-usd`
-   - Body starts with a `## For future Claude` preamble section (2-3 sentences summarizing what this post is about and why it was saved)
+   - Body starts with a `## For future agent` preamble section (2-3 sentences summarizing what this post is about and why it was saved)
    - Then the full structured analysis from the script
 
 6. Plain English triggers that route to this command: "read this tweet", "read this X post", "what's in this tweet", "analyze this X link" - when followed by a URL.
@@ -30,6 +31,6 @@ Use the obsidian-second-brain skill. Execute `/x-read [url]`:
 
 ---
 
-**AI-first rule:** Every note created or updated by this command MUST follow `references/ai-first-rules.md` - `## For future Claude` preamble, rich frontmatter (`type`, `date`, `tags`, `ai-first: true`, plus type-specific fields), recency markers per external claim, mandatory `[[wikilinks]]` for every person/project/concept referenced, sources preserved verbatim with URLs inline, and confidence levels where applicable. The vault is for future-Claude retrieval - not human reading.
+**AI-first rule:** Every note created or updated by this command MUST follow `references/ai-first-rules.md` - `## For future agent` preamble, rich frontmatter (`type`, `date`, `tags`, `ai-first: true`, plus type-specific fields), recency markers per external claim, mandatory `[[wikilinks]]` for every person/project/concept referenced, sources preserved verbatim with URLs inline, and confidence levels where applicable. If that path does not resolve from your working directory, search upward for it; if you still cannot read it, say so before writing rather than producing a note that silently skips the rule. The vault is for future agent retrieval - not human reading.
 
 **Anti-fabrication:** Search exhaustively before claiming any note, person, or file is absent - false absence is the most common failure mode - and never invent facts, entities, or dates (mark unknowns as `TBD`). See the anti-fabrication and search-completeness hard rules in `references/ai-first-rules.md`.

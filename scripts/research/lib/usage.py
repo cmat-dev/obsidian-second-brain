@@ -3,10 +3,9 @@ No blocking, just visibility - and fail-soft: a broken ledger must never
 abort the research call it is observing (fork-insights round 2, the
 api-ledger fork's pattern)."""
 
-from datetime import datetime
-from pathlib import Path
 import json
 import sys
+from datetime import datetime
 
 from .config import USAGE_LOG
 

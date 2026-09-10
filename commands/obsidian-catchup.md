@@ -4,6 +4,7 @@ category: vault
 triggers_en: ["catch up", "catchup", "what did I dump from telegram", "process my captures", "go through my telegram dumps", "anything new from the phone", "process my catchup", "review what I captured", "what did I capture on the go"]
 triggers_es: ["ponme al día", "qué mandé por telegram", "procesa mis capturas", "revisa lo que capturé desde el móvil", "hay algo nuevo del móvil", "repasa mi cola de capturas"]
 triggers_pt: ["coloque em dia", "catchup", "o que eu despejei do telegram", "processe minhas capturas", "passe pelas minhas capturas do telegram", "tem algo novo do telefone", "processe meu catchup", "revise o que capturei", "o que capturei na correria"]
+triggers_zh: ["看看我从手机记了什么", "处理 Telegram 收集箱", "整理我路上记的东西", "整理待处理的随手记录", "把最近随手记的内容过一遍"]
 ---
 
 Use the obsidian-second-brain skill. Execute `/obsidian-catchup $ARGUMENTS`:
@@ -28,6 +29,6 @@ The split this enforces: the phone is for fast, dumb capture; the laptop is wher
 
 ---
 
-**AI-first rule:** Every note created or updated by this command MUST follow `references/ai-first-rules.md` - `## For future Claude` preamble, rich frontmatter (`type`, `date`, `tags`, `ai-first: true`, plus type-specific fields), recency markers per external claim, mandatory `[[wikilinks]]` for every person/project/concept referenced, sources preserved verbatim with URLs inline, and confidence levels where applicable. The vault is for future-Claude retrieval - not human reading.
+**AI-first rule:** Every note created or updated by this command MUST follow `references/ai-first-rules.md` - `## For future agent` preamble, rich frontmatter (`type`, `date`, `tags`, `ai-first: true`, plus type-specific fields), recency markers per external claim, mandatory `[[wikilinks]]` for every person/project/concept referenced, sources preserved verbatim with URLs inline, and confidence levels where applicable. If that path does not resolve from your working directory, search upward for it; if you still cannot read it, say so before writing rather than producing a note that silently skips the rule. The vault is for future agent retrieval - not human reading.
 
 **Anti-fabrication:** Search exhaustively before claiming any note, person, or file is absent - false absence is the most common failure mode - and never invent facts, entities, or dates (mark unknowns as `TBD`). See the anti-fabrication and search-completeness hard rules in `references/ai-first-rules.md`.

@@ -16,10 +16,9 @@ import os
 
 import pytest
 
-from scripts.research.lib import cache, http
+from scripts.research.lib import cache, http, source_config
 from scripts.research.lib.aggregator import aggregate
 from scripts.research.lib.result import Result, encode_results
-from scripts.research.lib import source_config
 
 
 def test_library_imports_without_vault_path():
@@ -90,6 +89,29 @@ def test_cache_roundtrip(tmp_path, monkeypatch):
     assert hit is not None and hit[0]["title"] == "t"
     # Expired entries are treated as a miss.
     assert cache.get("hackernews", "rust async", ttl_hours=0) is None
+
+
+@pytest.mark.parametrize("ttl_hours", [0, -1])
+def test_cache_zero_ttl_is_a_miss_without_consulting_the_clock(tmp_path, monkeypatch, ttl_hours):
+    """test_cache_roundtrip uses ttl_hours=0 to mean "expired", and get() decided
+    it with `age > 0`, an age computed from two clocks of different resolution:
+    right after a write it can be exactly zero or negative, so the entry came
+    back as fresh (on the Windows machine this surfaced on, time.time() moves
+    in 15.6 ms steps and the roundtrip failed in 1 of 8 runs). A TTL of zero or
+    less has to be decided without the clock at all, so here the clock raises."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    cache.put("hackernews", "rust async", [Result(source="hackernews", title="t", url="u", points=1)])
+    entry = cache._key("hackernews", "rust async")
+
+    def clock_must_not_be_read():
+        raise AssertionError("a TTL of zero or less must be decided without the clock")
+
+    monkeypatch.setattr(cache.time, "time", clock_must_not_be_read)
+    assert cache.get("hackernews", "rust async", ttl_hours=ttl_hours) is None
+    assert entry.exists()  # put() still writes; only the lookups miss
+    monkeypatch.setattr(cache.time, "time", lambda: entry.stat().st_mtime)  # the write's own instant
+    assert cache.get("hackernews", "rust async", ttl_hours=1) is not None  # positive TTLs unchanged
 
 
 class _FakeSource:
@@ -348,7 +370,16 @@ def test_web_reader_caps_urls_and_truncates(monkeypatch, tmp_path):
     # Dedup + cap: only 3 unique http URLs sent.
     assert captured["json"]["urls"] == ["https://a.example", "https://b.example", "https://c.example"]
     assert captured["headers"]["Authorization"] == "Bearer tvly-test-key"
-    assert len(out["https://a.example"]) == web_reader.MAX_EXTRACT_CHARS
+    # Truncation is capped AND announced (#194). The payload is still cut at the
+    # cap; what is new is that the excerpt says so, because the synthesis prompt
+    # used to present it as full-page text and a silent cut reads as a complete
+    # page that simply never mentions the missing topic.
+    body = out["https://a.example"]
+    assert body.startswith("x" * web_reader.MAX_EXTRACT_CHARS)
+    assert body.count("x") == web_reader.MAX_EXTRACT_CHARS
+    assert "TRUNCATED" in body
+    assert str(web_reader.MAX_EXTRACT_CHARS) in body
+    # A page under the cap is passed through untouched - no spurious marker.
     assert out["https://b.example"] == "short"
 
     # Total failure -> {} and no exception.

@@ -4,6 +4,7 @@ category: thinking
 triggers_en: ["find contradictions", "reconcile vault", "fix conflicts", "vault contradictions"]
 triggers_es: ["busca contradicciones", "concilia el vault", "resuelve los conflictos", "contradicciones en el vault"]
 triggers_pt: ["encontre contradições", "reconcilie o vault", "corrija conflitos", "contradições do vault"]
+triggers_zh: ["找出知识库里的矛盾", "解决笔记之间的冲突", "核对相互矛盾的说法", "让知识库里的事实保持一致"]
 ---
 
 Use the obsidian-second-brain skill. Execute `/obsidian-reconcile $ARGUMENTS`:
@@ -43,6 +44,6 @@ The vault should never contain two pages that disagree without knowing they disa
 
 ---
 
-**AI-first rule:** Every note created or updated by this command MUST follow `references/ai-first-rules.md` - `## For future Claude` preamble, rich frontmatter (`type`, `date`, `tags`, `ai-first: true`, plus type-specific fields), recency markers per external claim, mandatory `[[wikilinks]]` for every person/project/concept referenced, sources preserved verbatim with URLs inline, and confidence levels where applicable. The vault is for future-Claude retrieval - not human reading.
+**AI-first rule:** Every note created or updated by this command MUST follow `references/ai-first-rules.md` - `## For future agent` preamble, rich frontmatter (`type`, `date`, `tags`, `ai-first: true`, plus type-specific fields), recency markers per external claim, mandatory `[[wikilinks]]` for every person/project/concept referenced, sources preserved verbatim with URLs inline, and confidence levels where applicable. If that path does not resolve from your working directory, search upward for it; if you still cannot read it, say so before writing rather than producing a note that silently skips the rule. The vault is for future agent retrieval - not human reading.
 
 **Anti-fabrication:** Search exhaustively before claiming any note, person, or file is absent - false absence is the most common failure mode - and never invent facts, entities, or dates (mark unknowns as `TBD`). See the anti-fabrication and search-completeness hard rules in `references/ai-first-rules.md`.
