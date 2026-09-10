@@ -573,9 +573,11 @@ def _semantic_fuse(
             units = n.get("_unit") or []
             return max((_dot(qunit, v) for v in units), default=0.0)
 
+        allowed_paths = set(scanned) if scanned is not None else None
         sem = sorted(
             ({"path": rel, "title": n.get("title", rel), "score": _note_score(rel, n)}
-             for rel, n in notes.items() if n.get("_unit")),
+             for rel, n in notes.items() if n.get("_unit")
+             and (allowed_paths is None or rel in allowed_paths)),
             key=lambda r: r["score"], reverse=True,
         )[:_FUSE_DEPTH]
         lex_rank = {r["path"]: i for i, r in enumerate(lexical[:min(_FUSE_DEPTH, _FUSE_LEX_DEPTH)])}
@@ -645,7 +647,9 @@ def search(query: str, *, limit: int = 6, semantic: Optional[bool] = None) -> Li
         title_score = 0.0
         body_score = 0.0
         for t in terms:
-            tc = title_low.count(t)
+            # ASCII title terms are words: "boot" must not give "Booth" the
+            # strong title bonus. Preserve CJK and non-ASCII substring behavior.
+            tc = len(re.findall(r"(?<!\w)" + re.escape(t) + r"(?!\w)", title_low)) if t.isascii() else title_low.count(t)
             if tc:
                 title_score += 5.0 * (1.0 + math.log1p(tc))
             bc = low.count(t)
@@ -853,7 +857,20 @@ def _run_post_write(vault: Path, rel: str, action: str) -> Optional[Dict[str, An
         timeout = float(os.environ.get(_POST_WRITE_TIMEOUT_ENV) or "45")
     except ValueError:
         timeout = 45.0
-    argv = shlex.split(cmd, posix=(os.name != "nt")) + [str(vault), rel, action]
+    try:
+        if cmd.startswith("["):
+            argv = json.loads(cmd)
+            if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv):
+                raise ValueError("expected a non-empty JSON array of strings")
+        else:
+            argv = shlex.split(cmd, posix=(os.name != "nt"))
+            if os.name == "nt":
+                argv = [a[1:-1] if len(a) >= 2 and a[0] == a[-1] and a[0] in ("'", '"') else a for a in argv]
+        if not argv or not argv[0]:
+            raise ValueError("missing executable")
+    except (ValueError, TypeError) as exc:
+        return {"ran": False, "ok": False, "detail": f"invalid post-write command: {exc}"}
+    argv += [str(vault), rel, action]
     try:
         p = subprocess.run(argv, cwd=str(vault), capture_output=True, text=True, timeout=timeout)
     except FileNotFoundError:
@@ -1320,19 +1337,37 @@ def _iter_notes(vault: Path):
     """Yield vault notes newest-first (modified time). Deterministic on purpose:
     every consumer of this iterator caps its scan, and a cap that bites must
     drop the oldest notes, never a random filesystem-order slice."""
+    config_path = vault / ".vault-config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8-sig")) if config_path.exists() else {}
+    if not isinstance(config, dict):
+        raise ValueError(".vault-config.json must contain an object")
+    for key in ("exclude-dirs", "exclude-paths"):
+        values = config.get(key, [])
+        if not isinstance(values, list) or not all(isinstance(v, str) for v in values):
+            raise ValueError(f".vault-config.json {key} must be a list of strings")
+    excluded = _SKIP_DIRS | {d.lower() for d in config.get("exclude-dirs", [])}
+    prefixes = [p.replace("\\", "/").strip("/").lower() for p in config.get("exclude-paths", [])]
+
+    def excluded_path(path):
+        rel = path.relative_to(vault)
+        key = rel.as_posix().lower()
+        return (any(p.lower() in excluded or p.lower().endswith("templates") for p in rel.parts)
+                or any(key == p or key.startswith(p + "/") for p in prefixes if p))
+
     found = []
-    for md in vault.rglob("*.md"):
-        parts = md.relative_to(vault).parts
-        if any(p.lower() in _SKIP_DIRS or p.lower().endswith("templates") for p in parts):
-            continue
-        # Drawings are JSON blobs in .md clothing; the semantic index skips them,
-        # so the lexical scan does too - one universe for every mode.
-        if md.name.endswith(".excalidraw.md"):
-            continue
-        try:
-            found.append((md.stat().st_mtime, md))
-        except OSError:
-            continue  # dangling symlink or race: a ghost must not kill the scan
+    for directory, dirs, names in os.walk(vault, followlinks=False):
+        base = Path(directory)
+        dirs[:] = [d for d in dirs if not excluded_path(base / d)
+                   and not (base / d).is_symlink()
+                   and not getattr(base / d, "is_junction", lambda: False)()]
+        for name in names:
+            md = base / name
+            if not name.endswith(".md") or name.endswith(".excalidraw.md") or excluded_path(md) or md.is_symlink():
+                continue
+            try:
+                found.append((md.stat().st_mtime, md))
+            except OSError:
+                continue
     found.sort(key=lambda t: t[0], reverse=True)
     for _, md in found:
         yield md

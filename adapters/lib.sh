@@ -343,6 +343,12 @@ copy_scripts_with_project() {
   mkdir -p "$dst"
   cp -R "$src/." "$dst/"
   cp "$src/../pyproject.toml" "$(dirname "$dst")/pyproject.toml"
+  # Retrieval evaluation imports the real search engine relative to its root.
+  # Ship that module alongside scripts so installed evaluations can run.
+  if [[ -d "$src/../integrations/obsidian-mcp-server" ]]; then
+    mkdir -p "$(dirname "$dst")/integrations/obsidian-mcp-server"
+    cp "$src/../integrations/obsidian-mcp-server/"*.py "$(dirname "$dst")/integrations/obsidian-mcp-server/"
+  fi
 }
 
 # copy_references_rewritten <src-refs-dir> <dst-refs-dir> <platform_dir>

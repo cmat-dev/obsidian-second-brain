@@ -140,11 +140,7 @@ _ask_emit_core() {
     cp -R "$src/references/." "$dst/references/"
   fi
   # scripts/ + pyproject.toml (self-contained uv project)
-  if [[ -d "$src/scripts" ]]; then
-    mkdir -p "$dst/scripts"
-    cp -R "$src/scripts/." "$dst/scripts/"
-  fi
-  [[ -f "$src/pyproject.toml" ]] && cp "$src/pyproject.toml" "$dst/pyproject.toml"
+  copy_scripts_with_project "$src/scripts" "$dst/scripts"
 
   # SKILL.md - carries the discovery frontmatter; instructs the agent not to
   # invoke it directly. metadata.category is spec-minimal like the rest.

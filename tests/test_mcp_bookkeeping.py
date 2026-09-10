@@ -139,3 +139,24 @@ def test_post_write_failures_are_reported_never_raised(vault, monkeypatch, tmp_p
     monkeypatch.setenv("OBSIDIAN_POST_WRITE_CMD", "no-such-command-xyz")
     res = ops.capture_idea("post-write missing")
     assert res["post_write"]["ran"] is False and "command not found" in res["post_write"]["detail"], res
+
+
+@pytest.mark.parametrize("command", ['[', '[]', '[2]', '[""]', '"unfinished'])
+def test_malformed_post_write_does_not_hide_saved_note(vault, monkeypatch, command):
+    v, ops = vault
+    monkeypatch.setenv("OBSIDIAN_POST_WRITE_CMD", command)
+    res = ops.capture_idea("invalid hook")
+    assert res["post_write"]["ran"] is False
+    assert "invalid post-write command" in res["post_write"]["detail"]
+    assert (v / res["saved"]).is_file()
+
+
+def test_post_write_json_preserves_exact_arguments(vault, monkeypatch, tmp_path):
+    v, ops = vault
+    script = tmp_path / "hook with spaces.py"
+    out = tmp_path / "argv.json"
+    script.write_text(f"import json, sys; json.dump(sys.argv[1:], open({str(out)!r}, 'w'))\n", encoding="utf-8")
+    monkeypatch.setenv("OBSIDIAN_POST_WRITE_CMD", json.dumps([sys.executable, str(script), "", 'say "hello"']))
+    res = ops.capture_idea("exact arguments")
+    assert res["post_write"]["ok"] is True
+    assert json.loads(out.read_text()) == ["", 'say "hello"', str(v), res["saved"], "capture"]

@@ -70,6 +70,30 @@ def test_every_adapter_is_discovered():
     assert len(PLATFORMS) >= 7, f"expected 7+ adapters, found {PLATFORMS}"
 
 
+@pytest.mark.parametrize("relative_root", [
+    "agent-skills/skills/obsidian-core",
+    "codex-cli/.codex",
+    "gemini-cli/.gemini",
+])
+def test_installed_retrieval_eval_uses_shipped_search_engine(built, relative_root, tmp_path):
+    import os
+    import sys
+
+    engine_root = built / relative_root
+    note = tmp_path / "signal.md"
+    note.write_text("---\ndate: 2026-09-10\ntags: [note]\n---\n# Zephyrsignal\nUnique zephyrsignal finding.\n", encoding="utf-8")
+    cases = tmp_path / "cases.jsonl"
+    cases.write_text('{"q":"zephyrsignal","gold":["signal.md"]}\n', encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(engine_root / "scripts/eval/retrieval_eval.py"), "--cases", str(cases), "--json"],
+        cwd=tmp_path, env=dict(os.environ, OBSIDIAN_VAULT_PATH=str(tmp_path)),
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    import json
+    assert json.loads(result.stdout)["summary"]["recall_at"]["1"] == 1.0
+
+
 @pytest.mark.parametrize("platform", PLATFORMS)
 def test_build_emits_a_non_empty_tree(built: Path, platform: str) -> None:
     """A build that exits 0 with an empty output tree is the failure mode CI
