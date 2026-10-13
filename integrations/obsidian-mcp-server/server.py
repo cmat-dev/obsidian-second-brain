@@ -39,7 +39,6 @@ or wire it into a client's MCP config (see README.md).
 # import back.
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -58,7 +57,6 @@ from mcp.server.fastmcp import FastMCP  # noqa: E402
 
 settings = load_settings()
 if settings.transport == "streamable-http":
-    os.environ["OBSIDIAN_MCP_REQUIRE_READ_HASH"] = "1"
     mcp = FastMCP(
         "obsidian-second-brain",
         host=settings.host,

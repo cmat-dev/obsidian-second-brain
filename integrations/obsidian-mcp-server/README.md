@@ -99,7 +99,9 @@ Disabled tools disappear from `tools/list` and cannot be called. Unknown names
 or malformed lists refuse startup so a misspelling cannot silently weaken the
 policy. There are no standalone delete, frontmatter-update or tag-management
 tools in this server. `OBSIDIAN_MCP_ALLOW_FRONTMATTER=0` separately blocks the
-`set_fields` argument on `obsidian_update_note`.
+`set_fields` argument on `obsidian_update_note`, blocks frontmatter patches, and
+preserves the existing note bytes during appends. Existing-note provenance then
+lives in the operation log; newly saved notes can use `OBSIDIAN_MCP_AGENT`.
 
 HTTP mode enforces `OBSIDIAN_MCP_REQUIRE_READ_HASH=1`. Read the current note
 with `obsidian_read_note`, then pass its full-file `sha256` as
@@ -108,6 +110,21 @@ with `obsidian_read_note`, then pass its full-file `sha256` as
 re-read and redo the change. New notes remain create-only. Stdio has no HTTP
 authentication requirement and ignores the HTTP-only host, port and public URL
 settings.
+
+Notes, catalog entries and log lines use the cooperative transaction helper,
+with source hashes and recoverable journals. `OBSIDIAN_TRANSACTION_HELPER`
+can select an existing vault's canonical helper; otherwise the vault's
+`scripts/vault_transaction.py` is preferred over the bundled helper. Vaults
+with `Tasks/PA` need the matching `packet_invalidation.py` extension. Do not
+remove an unresolved journal to bypass a refused write. This lock does not
+lock Obsidian or coordinate edits between separately synced devices.
+
+`OBSIDIAN_SKILL_FLAVOR=grok-bot` renders the command bank for Composio clients
+without a fixed toolkit prefix. `OBSIDIAN_COMMANDS_DIR` selects the actual
+customised bank. `OBSIDIAN_AI_FIRST_RULES` and `OBSIDIAN_VAULT_CONFIG` can point
+at separately deployed policy files when a sync client excludes hidden files;
+explicitly configured missing files fail closed. The skill list mirrors the
+available bank, while each playbook reports steps requiring unavailable tools.
 
 ## Wire it into a client
 

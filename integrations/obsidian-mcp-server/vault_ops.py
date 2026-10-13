@@ -10,6 +10,8 @@ with type/date/tags/ai-first, a `## For future agent` preamble, and a
 
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -707,14 +709,17 @@ def read_note(
     target = _resolve_in_vault(vault, rel)
     if target is None:
         return {"error": "path is outside the vault"}
-    text = _read_safe(target)
-    if text is None:
+    try:
+        data = target.read_bytes()
+        text = data.decode('utf-8-sig')
+    except (OSError, UnicodeDecodeError):
         return {"error": f"not found: {rel}"}
     total = len(text)
     content = text[offset:offset + limit]
     end = offset + len(content)
     return {
         "path": rel,
+        "sha256": hashlib.sha256(data).hexdigest(),
         "content": content,
         "offset": offset,
         "limit": limit,
@@ -900,9 +905,18 @@ def _bookkeep(vault: Path, action: str, rel: str, description: str, *, summary: 
         v = validate_note(rel)
         out["validation"] = ({"ok": v.get("ok"), "issues": v.get("issues", [])}
                              if "error" not in v else {"ok": None, "issues": [v["error"]]})
-        if summary is not None:
-            out["index"] = _add_index_entry(vault, rel, summary)
-        out["log"] = _append_log_line(vault, action, description)
+        engine = _transaction_engine(vault)
+        for attempt in range(3):
+            writes, report = _bookkeeping_plan(vault, action, rel, description, summary)
+            logical = json.dumps(writes, sort_keys=True, ensure_ascii=False).encode('utf-8')
+            request = {'operation_id': 'mcp-bookkeeping-' + hashlib.sha256(logical).hexdigest(), 'writes': writes}
+            try:
+                engine.apply(vault, request)
+                out.update(report)
+                break
+            except engine.Conflict as exc:
+                if not str(exc).startswith('Stale source: ') or attempt == 2:
+                    raise
     post = _run_post_write(vault, rel, action)
     if post is not None:
         out["post_write"] = post
@@ -926,6 +940,9 @@ def save_note(
         return {"error": "title and content are required"}
     note_type = (note_type or "note").strip() or "note"
     tags = [str(t) for t in (tags or [note_type])]
+    # These strings become YAML, so prevent newlines injecting policy fields.
+    if any('\n' in value or '\r' in value for value in [note_type, *tags]):
+        return {"error": "type and tags must be single-line values"}
 
     date = datetime.now().strftime("%Y-%m-%d")
     if path:
@@ -948,11 +965,12 @@ def save_note(
         return {"error": str(exc)}
     body = (
         f"---\n"
-        f"type: {note_type}\n"
+        f"type: {json.dumps(note_type)}\n"
         f"date: {date}\n"
         f"tags:\n{tag_block}\n"
         f"ai-first: true\n"
         f"source: mcp\n"
+        + (f"agent: {json.dumps(_agent_name())}\n" if _agent_name() else "") +
         f"---\n\n"
         f"{note_body}"
     )
@@ -967,14 +985,16 @@ def save_note(
             )
         }
     target.parent.mkdir(parents=True, exist_ok=True)
-    _write_atomic(target, body)
     rel = target.relative_to(vault).as_posix()
     action = "save" if path else "capture"
     first = re.sub(r"\s+", " ", content.split("\n", 1)[0]).strip()[:140]
     tag_note = f" (tags: {', '.join(tags)})" if tags else ""
-    result: Dict[str, Any] = {"saved": rel}
-    result.update(_bookkeep(vault, action, rel, f"{title[:80]} -> [[{rel[:-3]}]]{tag_note}",
-                            summary=f"`type: {note_type}`, {action}d {datetime.now().strftime('%Y-%m-%d %H:%M')} through the MCP server. {first}"))
+    committed = _commit_note(vault, rel, body, None, action,
+                             f"{title[:80]} -> [[{rel[:-3]}]]{tag_note}",
+                             summary=f"`type: {note_type}`, {action}d {datetime.now().strftime('%Y-%m-%d %H:%M')} through the MCP server. {first}")
+    if "error" in committed:
+        return committed
+    result: Dict[str, Any] = {"saved": rel, **committed}
     return result
 
 
@@ -993,6 +1013,7 @@ def update_note(
     append: Optional[str] = None,
     heading: Optional[str] = None,
     set_fields: Optional[Dict[str, str]] = None,
+    expected_sha256: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Guarded edit of an EXISTING vault note.
 
@@ -1011,15 +1032,24 @@ def update_note(
         return {"error": "path is outside the vault"}
     if {p.lower() for p in target.relative_to(vault).parts} & _PROTECTED_WRITE_DIRS:
         return {"error": "path is in a protected directory"}
-    text = _read_safe(target)
+    try:
+        text, source_hash = _write_snapshot(target, expected_sha256)
+    except (OSError, ValueError) as exc:
+        return {"error": str(exc)}
     if text is None:
         return {"error": f"not found: {rel} (update_note only edits existing notes)"}
     if not append and not set_fields:
         return {"error": "nothing to update: provide append and/or set_fields"}
+    if set_fields and os.environ.get('OBSIDIAN_MCP_ALLOW_FRONTMATTER', '1') == '0':
+        return {"error": "frontmatter updates are disabled by this vault's tool policy"}
 
-    fm_lines, body, _ = _split_frontmatter(text)
+    fm_lines, body, _ = _split_frontmatter(text.lstrip('\ufeff'))
     fields = {str(k): str(v) for k, v in (set_fields or {}).items()}
-    fields.setdefault("updated", datetime.now().strftime("%Y-%m-%d"))
+    preserve_frontmatter = os.environ.get('OBSIDIAN_MCP_ALLOW_FRONTMATTER', '1') == '0'
+    if not preserve_frontmatter:
+        fields.setdefault("updated", datetime.now().strftime("%Y-%m-%d"))
+        if _agent_name():
+            fields['agent'] = _agent_name()
     fm_lines = _apply_fields(fm_lines, fields)
 
     new_body = body
@@ -1030,12 +1060,21 @@ def update_note(
         else:
             new_body = new_body.rstrip() + f"\n\n{section}\n"
 
-    out = "---\n" + "\n".join(fm_lines).strip("\n") + "\n---\n\n" + new_body.lstrip("\n")
+    out = "---\n" + "\n".join(fm_lines).strip("\n") + "\n---\n\n" + new_body.lstrip("\r\n")
+    out = _preserve_encoding(text, out)
+    if preserve_frontmatter:
+        # Appends used by unattended routines must preserve every source byte,
+        # including frontmatter. Provenance is retained in the operation log.
+        addition = (f'## {heading.strip()}\n\n' if heading else '') + append.strip() + '\n'
+        separator = '' if text.endswith(('\n\n', '\r\n\r\n')) else '\n\n'
+        out = text + _preserve_encoding(text, separator + addition).lstrip('\ufeff')
     if not _unchanged_since(target, text):
         return {"error": f"{rel} {_NOTE_CHANGED_HINT}"}
-    _write_atomic(target, out)
+    committed = _commit_note(vault, rel, out, source_hash, "update", f"[[{rel[:-3]}]] " + ("appended" if append else "fields set: " + ", ".join(sorted(fields.keys()))))
+    if "error" in committed:
+        return committed
     out: Dict[str, Any] = {"updated": rel, "set": sorted(fields.keys()), "appended": bool(append)}
-    out.update(_bookkeep(vault, "update", rel, f"[[{rel[:-3]}]] " + ("appended" if append else "fields set: " + ", ".join(sorted(fields.keys())))))
+    out.update(committed)
     # Surface a retrieval-affecting change instead of making it silent: a status
     # in _STALE_STATUSES multiplies this note's score in every future search.
     new_status = str(fields.get("status", "")).strip().lower()
@@ -1047,7 +1086,7 @@ def update_note(
     return out
 
 
-def replace_text(rel: str, old_text: str, new_text: str) -> Dict[str, Any]:
+def replace_text(rel: str, old_text: str, new_text: str, *, expected_sha256: Optional[str] = None) -> Dict[str, Any]:
     """Replace one exact, unique block in an existing note atomically.
 
     This is the MCP equivalent of a guarded patch. Requiring an exact unique
@@ -1065,7 +1104,10 @@ def replace_text(rel: str, old_text: str, new_text: str) -> Dict[str, Any]:
         return {"error": "path is outside the vault"}
     if {p.lower() for p in target.relative_to(vault).parts} & _PROTECTED_WRITE_DIRS:
         return {"error": "path is in a protected directory"}
-    text = _read_safe(target)
+    try:
+        text, source_hash = _write_snapshot(target, expected_sha256)
+    except (OSError, ValueError) as exc:
+        return {"error": str(exc)}
     if text is None:
         return {"error": f"not found: {rel}"}
     count = text.count(old_text)
@@ -1073,13 +1115,24 @@ def replace_text(rel: str, old_text: str, new_text: str) -> Dict[str, Any]:
         return {"error": f"old_text must match exactly once; found {count} matches"}
     if not _unchanged_since(target, text):
         return {"error": f"{rel} {_NOTE_CHANGED_HINT}"}
-    _write_atomic(target, text.replace(old_text, new_text, 1))
+    candidate = text.replace(old_text, new_text, 1)
+    if os.environ.get('OBSIDIAN_MCP_ALLOW_FRONTMATTER', '1') == '0':
+        if _frontmatter_envelope(text) != _frontmatter_envelope(candidate):
+            return {"error": "frontmatter updates are disabled by this vault's tool policy"}
+    if _agent_name() and os.environ.get('OBSIDIAN_MCP_ALLOW_FRONTMATTER', '1') != '0':
+        fm, body, _ = _split_frontmatter(candidate.lstrip('\ufeff'))
+        if fm:
+            fm = _apply_fields(fm, {'agent': _agent_name()})
+            candidate = _preserve_encoding(text, "---\n" + '\n'.join(fm).strip('\n') + "\n---\n\n" + body.lstrip('\r\n'))
+    committed = _commit_note(vault, rel, candidate, source_hash, "edit", f"[[{rel[:-3]}]] text replaced")
+    if "error" in committed:
+        return committed
     result: Dict[str, Any] = {"updated": rel, "replacements": 1}
-    result.update(_bookkeep(vault, "edit", rel, f"[[{rel[:-3]}]] text replaced"))
+    result.update(committed)
     return result
 
 
-def move_note(source: str, destination: str) -> Dict[str, Any]:
+def move_note(source: str, destination: str, *, expected_sha256: Optional[str] = None) -> Dict[str, Any]:
     """Move one note inside the vault without overwriting anything."""
     vault = resolve_vault()
     src = _resolve_in_vault(vault, (source or "").strip())
@@ -1093,6 +1146,10 @@ def move_note(source: str, destination: str) -> Dict[str, Any]:
             return {"error": "source or destination is in a protected directory"}
     if not src.is_file():
         return {"error": f"not found: {source}"}
+    try:
+        original, _ = _write_snapshot(src, expected_sha256)
+    except (OSError, ValueError) as exc:
+        return {"error": str(exc)}
     if dst.exists():
         return {"error": f"destination already exists: {destination}"}
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -1102,24 +1159,34 @@ def move_note(source: str, destination: str) -> Dict[str, Any]:
     # completes the move. If unlinking fails, both copies remain (safe) rather
     # than either note being lost.
     try:
-        os.link(src, dst)
+        engine = _transaction_engine(vault)
+        engine.target_path(vault, src.relative_to(vault).as_posix())
+        engine.target_path(vault, dst.relative_to(vault).as_posix())
+        with engine.writer_lock(vault) as state:
+            for journal in (state / 'transactions').glob('*.json'):
+                if json.loads(journal.read_text(encoding='utf-8'))['state'] != 'committed':
+                    return {'error': f'Unresolved transaction: {journal.stem}'}
+            if not _unchanged_since(src, original):
+                return {"error": f"{source} {_NOTE_CHANGED_HINT}"}
+            os.link(src, dst)
+            # A sync client may replace the source without taking this lock.
+            # Refuse to unlink a replacement that is not the linked original.
+            if not src.samefile(dst) or not _unchanged_since(src, original):
+                return {'error': f'{source} {_NOTE_CHANGED_HINT}', 'destination': destination}
+            src.unlink()
     except FileExistsError:
         return {"error": f"destination already exists: {destination}"}
-    except OSError as exc:
-        return {"error": f"could not create destination safely: {exc}"}
-    try:
-        src.unlink()
-    except OSError as exc:
-        return {
-            "error": f"destination was created but source could not be removed: {exc}",
-            "destination": destination,
-        }
+    except (OSError, ValueError, RuntimeError) as exc:
+        return {"error": f"could not move safely: {exc}", "destination": destination if dst.exists() else None}
     result: Dict[str, Any] = {
         "moved": source,
         "destination": destination,
         "warning": "update any path-qualified wikilinks that still name the old path",
     }
-    result.update(_bookkeep(vault, "move", destination, f"{source} -> [[{destination[:-3]}]]"))
+    try:
+        result.update(_bookkeep(vault, "move", destination, f"{source} -> [[{destination[:-3]}]]"))
+    except (OSError, ValueError, RuntimeError) as exc:
+        result['bookkeeping_error'] = str(exc)
     return result
 
 
@@ -1236,12 +1303,15 @@ def vault_health() -> Dict[str, Any]:
     wanted: List[Dict[str, str]] = []
     linked_to: set = set()
     has_outbound: set = set()
+    sync_conflicts: List[str] = []
     count = 0
     for i, md in enumerate(_iter_notes(vault)):
         if i >= _MAX_FILES_SCANNED:
             break
         count += 1
         rel = str(md.relative_to(vault))
+        if re.search(r'(?i)(?:sync-conflict|\(conflict[ -]|conflicted copy)', md.name):
+            sync_conflicts.append(rel)
         note_paths[md.stem.lower()] = rel
         text = _read_safe(md, limit=_MAX_FILE_BYTES) or ""
         if not text.lstrip().startswith("---"):
@@ -1262,6 +1332,7 @@ def vault_health() -> Dict[str, Any]:
         "orphans": {"count": len(orphans), "sample": sorted(orphans)[:10]},
         "wanted_notes": {"count": len(wanted), "sample": wanted},
         "missing_frontmatter": {"count": len(missing_fm), "sample": missing_fm},
+        "sync_conflicts": {"count": len(sync_conflicts), "sample": sorted(sync_conflicts)[:10]},
     }
 
 
@@ -1289,7 +1360,7 @@ def list_skills() -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for md in sorted(cmds.glob("*.md")):
         name = md.stem
-        if name in _EXCLUDED_SKILLS:
+        if name in _EXCLUDED_SKILLS and os.environ.get('OBSIDIAN_SKILL_FLAVOR', '') != 'grok-bot':
             continue
         meta, _ = _parse_command(md)
         out.append(
@@ -1312,13 +1383,30 @@ def get_skill(name: str) -> Dict[str, Any]:
     # escaping the commands/ dir, since lstrip("/") alone does not remove ".." segments.
     if not all(c.isalnum() or c in "-_" for c in name):
         return {"error": f"unknown skill: {name}"}
-    if name in _EXCLUDED_SKILLS:
+    if name in _EXCLUDED_SKILLS and os.environ.get('OBSIDIAN_SKILL_FLAVOR', '') != 'grok-bot':
         return {"error": f"skill '{name}' is not exposed over MCP"}
     cmds = _commands_dir()
     md = (cmds / f"{name}.md") if cmds else None
     if md is None or not md.is_file():
         return {"error": f"unknown skill: {name}"}
     meta, body = _parse_command(md)
+    if os.environ.get('OBSIDIAN_SKILL_FLAVOR', '').strip() == 'grok-bot':
+        helper = Path(__file__).resolve().parents[2] / 'scripts/grok_skills.py'
+        if not helper.is_file():
+            helper = Path(__file__).parent / 'grok_skills.py'
+        if not helper.is_file():
+            return {'error': 'Grok skill renderer is missing from this deployment'}
+        spec = importlib.util.spec_from_file_location('obsidian_grok_skills', helper)
+        renderer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(renderer)
+        configured_rules = os.environ.get('OBSIDIAN_AI_FIRST_RULES')
+        rules = Path(configured_rules) if configured_rules else cmds.parent / 'references/ai-first-rules.md'
+        if configured_rules and not rules.is_file():
+            return {'error': 'Configured AI-first rules are missing from this deployment'}
+        if not rules.is_file():
+            rules = Path(__file__).resolve().parents[2] / 'references/ai-first-rules.md'
+        return {'name': name, 'description': meta.get('description', ''),
+                'instructions': renderer.render_instructions(body, ai_rules=_read_safe(rules) if rules.is_file() else None)}
     note = (
         "Run this skill using the MCP tools on this server for vault I/O: "
         "obsidian_search (find/recall), obsidian_read_note (paginated read to EOF), "
@@ -1345,11 +1433,163 @@ def get_skill(name: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _agent_name() -> str:
+    agent = os.environ.get('OBSIDIAN_MCP_AGENT', '').strip()
+    if agent and not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', agent):
+        raise ValueError('OBSIDIAN_MCP_AGENT must be a short identifier')
+    return agent
+
+
+def _transaction_engine(vault: Path):
+    """Use the canonical helper if deployed; never silently bypass it."""
+    configured = os.environ.get('OBSIDIAN_TRANSACTION_HELPER')
+    helper = Path(configured) if configured else vault / 'scripts/vault_transaction.py'
+    if not configured and not helper.is_file():
+        helper = Path(__file__).with_name('vault_transaction.py')
+    if not helper.is_file():
+        raise ValueError('shared transaction helper is missing')
+    spec = importlib.util.spec_from_file_location('obsidian_shared_transaction', helper)
+    engine = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(engine)
+    return engine
+
+
+def _write_snapshot(path: Path, expected: Optional[str] = None):
+    """Strict, byte-exact source for a write and its client read precondition."""
+    if expected is not None and not re.fullmatch(r'[a-f0-9]{64}', expected):
+        raise ValueError('expected_sha256 must be a lowercase SHA-256 hash')
+    default_hash_policy = '1' if os.environ.get('OBSIDIAN_MCP_TRANSPORT', '').strip() == 'streamable-http' else '0'
+    if expected is None and os.environ.get('OBSIDIAN_MCP_REQUIRE_READ_HASH', default_hash_policy) == '1':
+        raise ValueError('read the note first and supply its sha256 as expected_sha256')
+    data = path.read_bytes()
+    if len(data) > 4_000_000:
+        raise ValueError('note exceeds the 4MB guarded write limit')
+    try:
+        text = data.decode('utf-8')
+    except UnicodeDecodeError as exc:
+        raise ValueError('note is not valid UTF-8; refusing to rewrite it') from exc
+    source_hash = hashlib.sha256(data).hexdigest()
+    if expected is not None and expected != source_hash:
+        raise ValueError(f'{path.name} {_NOTE_CHANGED_HINT}')
+    return text, source_hash
+
+
+def _preserve_encoding(original: str, replacement: str) -> str:
+    replacement = replacement.lstrip('\ufeff')
+    if '\r\n' in original and '\n' not in original.replace('\r\n', ''):
+        replacement = replacement.replace('\r\n', '\n').replace('\n', '\r\n')
+    return ('\ufeff' if original.startswith('\ufeff') else '') + replacement
+
+
+def _file_snapshot(path: Path):
+    try:
+        data = path.read_bytes()
+    except FileNotFoundError:
+        return '', None
+    return data.decode('utf-8'), hashlib.sha256(data).hexdigest()
+
+
+def _bookkeeping_plan(vault: Path, action: str, rel: str, description: str, summary: Optional[str]):
+    """Prepare catalog and log appends in the same recoverable transaction."""
+    writes = []
+    report = {}
+    if not _bookkeeping_enabled() or _is_bookkeeping_surface(rel):
+        return writes, report
+    now = datetime.now()
+    day = now.strftime('%Y-%m-%d')
+    agent = _agent_name()
+    marker = f' [{agent}]' if agent else ''
+    # A description is one log line, even when a title supplied newlines.
+    description = re.sub(r'\s+', ' ', description).strip()
+    logs = vault / 'Logs'
+    log_rel = f'Logs/{day}.md' if logs.is_dir() else 'log.md'
+    log_path = vault / log_rel
+    log_text, log_hash = _file_snapshot(log_path)
+    if logs.is_dir():
+        if log_hash is None:
+            log_text = f'---\ntype: log\ndate: {day}\nai-first: true\n---\n\n# {day}\n\n'
+        line = f"**{now.strftime('%H:%M')}** - {action}{marker} | {description}\n"
+    else:
+        line = f'\n## [{day}] {action}{marker} | {description}\n'
+    writes.append({'path': log_rel, 'expected_sha256': log_hash,
+                   'content': log_text + _preserve_encoding(log_text, line).lstrip('\ufeff')})
+    report['log'] = log_rel
+    if summary is None:
+        return writes, report
+    idx = vault / 'index.md'
+    index_text, index_hash = _file_snapshot(idx)
+    if index_hash is None:
+        report['index'] = 'index.md not found; no entry added'
+        return writes, report
+    if '/' not in rel:
+        report['index'] = 'root note; index.md entries are per folder, none added'
+        return writes, report
+    folder = rel.rsplit('/', 1)[0]
+    normal = index_text.lstrip('\ufeff').replace('\r\n', '\n')
+    m = re.search(rf'^##\s+{re.escape(folder)}/?\s*$', normal, re.M)
+    if not m:
+        report['index'] = f"index.md has no '## {folder}/' section; no entry added"
+        return writes, report
+    nxt = re.search(r'^## ', normal[m.end():], re.M)
+    end = m.end() + (nxt.start() if nxt else len(normal) - m.end())
+    section = normal[m.end():end]
+    link = f'[[{rel[:-3]}]]'
+    if link in section:
+        report['index'] = f"index.md '## {folder}/' entry already present"
+        return writes, report
+    bullet = f'- {link} - {re.sub(chr(10), " ", summary)}\n'
+    bullets = list(re.finditer(r'^- \[\[.*$', section, re.M))
+    if bullets:
+        at = m.end() + bullets[-1].end() + 1
+        updated = normal[:at] + bullet + normal[at:]
+    else:
+        updated = normal[:end].rstrip('\n') + '\n\n' + bullet + ('\n' if nxt else '') + normal[end:]
+    writes.append({'path': 'index.md', 'expected_sha256': index_hash,
+                   'content': _preserve_encoding(index_text, updated)})
+    report['index'] = f"index.md '## {folder}/' entry added"
+    return writes, report
+
+
+def _commit_note(vault: Path, rel: str, text: str, expected: Optional[str], action: str,
+                 description: str, *, summary: Optional[str] = None):
+    """Note + bookkeeping share source hashes, lock, journal and operation ID."""
+    try:
+        engine = _transaction_engine(vault)
+        for attempt in range(3):
+            metadata_writes, report = _bookkeeping_plan(vault, action, rel, description, summary)
+            writes = [{'path': rel, 'expected_sha256': expected, 'content': text}, *metadata_writes]
+            logical = json.dumps(writes, sort_keys=True, ensure_ascii=False).encode('utf-8')
+            operation_id = 'mcp-' + hashlib.sha256(logical).hexdigest()
+            try:
+                engine.apply(vault, {'operation_id': operation_id, 'writes': writes})
+                if _bookkeeping_enabled():
+                    report['transaction_id'] = operation_id
+                if _bookkeeping_enabled() and not _is_bookkeeping_surface(rel):
+                    report['validation'] = validate_note(rel)
+                post = _run_post_write(vault, rel, action)
+                if post is not None:
+                    report['post_write'] = post
+                return report
+            except engine.Conflict as exc:
+                # Only preflight catalog/log conflicts are safe to recalculate.
+                retry_paths = {w['path'] for w in metadata_writes}
+                if str(exc).startswith('Stale source: ') and str(exc)[14:] in retry_paths and attempt < 2:
+                    continue
+                return {'error': f'{rel} {_NOTE_CHANGED_HINT} Transaction refused: {exc}',
+                        'transaction_id': operation_id}
+    except (ValueError, UnicodeError) as exc:
+        return {'error': str(exc)}
+    return {'error': 'bookkeeping changed repeatedly; re-read and retry'}
+
+
 def _iter_notes(vault: Path):
     """Yield vault notes newest-first (modified time). Deterministic on purpose:
     every consumer of this iterator caps its scan, and a cap that bites must
     drop the oldest notes, never a random filesystem-order slice."""
-    config_path = vault / ".vault-config.json"
+    configured_config = os.environ.get('OBSIDIAN_VAULT_CONFIG')
+    config_path = Path(configured_config) if configured_config else vault / ".vault-config.json"
+    if configured_config and not config_path.is_file():
+        raise ValueError('Configured vault scan policy is missing')
     config = json.loads(config_path.read_text(encoding="utf-8-sig")) if config_path.exists() else {}
     if not isinstance(config, dict):
         raise ValueError(".vault-config.json must contain an object")
@@ -1370,11 +1610,10 @@ def _iter_notes(vault: Path):
     for directory, dirs, names in os.walk(vault, followlinks=False):
         base = Path(directory)
         dirs[:] = [d for d in dirs if not excluded_path(base / d)
-                   and not (base / d).is_symlink()
-                   and not getattr(base / d, "is_junction", lambda: False)()]
+                   and not _is_reparse(base / d)]
         for name in names:
             md = base / name
-            if not name.endswith(".md") or name.endswith(".excalidraw.md") or excluded_path(md) or md.is_symlink():
+            if not name.endswith(".md") or name.endswith(".excalidraw.md") or excluded_path(md) or _is_reparse(md):
                 continue
             try:
                 found.append((md.stat().st_mtime, md))
@@ -1471,11 +1710,14 @@ def _unchanged_since(path: Path, expected: str) -> bool:
     writes second now sees the other's bytes on disk and refuses, so the loss
     is reported to the caller that can still redo it rather than vanishing.
 
-    Compared through _read_safe so both reads normalise identically (utf-8-sig,
-    same truncation limit). This covers the note itself; the bookkeeping
-    appends to index.md and log.md carry the same race and are not guarded here.
+    Compare exact UTF-8 bytes without normalising BOMs or newlines. The shared
+    transaction repeats the source check inside the cooperative writer lock
+    and guards the catalog/log writes in that same recoverable operation.
     """
-    return _read_safe(path) == expected
+    try:
+        return path.read_bytes().decode('utf-8') == expected
+    except (OSError, UnicodeDecodeError):
+        return False
 
 
 def _resolve_in_vault(vault: Path, rel: str) -> Optional[Path]:
@@ -1485,10 +1727,27 @@ def _resolve_in_vault(vault: Path, rel: str) -> Optional[Path]:
     inlined identically in read_note, update_note, and validate_note; the next
     tool to forget a line would have reintroduced traversal silently.
     """
-    target = (vault / rel).resolve()
+    requested = vault / rel
+    for candidate in [requested, *requested.parents]:
+        if _is_reparse(candidate):
+            return None
+        if candidate == vault:
+            break
+    target = requested.resolve()
     if vault != target and vault not in target.parents:
         return None
     return target
+
+
+def _is_reparse(path: Path) -> bool:
+    """Skip Windows junctions even on Python versions without is_junction."""
+    if path.is_symlink():
+        return True
+    try:
+        info = path.lstat()
+        return bool(getattr(info, 'st_file_attributes', 0) & 0x400 or getattr(info, 'st_reparse_tag', 0))
+    except FileNotFoundError:
+        return False
 
 
 def _read_safe(path: Path, *, limit: int = 4_000_000) -> Optional[str]:
@@ -1593,18 +1852,20 @@ def _stem_index(vault: Path) -> Dict[str, str]:
     return idx
 
 
+def _frontmatter_envelope(text: str) -> str:
+    match = re.match(r'\A\ufeff?---[ \t]*\r?\n.*?^---[ \t]*(?:\r?\n|\Z)', text, re.S | re.M)
+    return match.group(0) if match else ''
+
+
 def _split_frontmatter(text: str):
     """Split into (frontmatter_lines, body, had_frontmatter).
 
     frontmatter_lines excludes the --- fences; body is everything after them.
     Preserves raw lines so unknown/list keys survive a round-trip untouched.
     """
-    if text.startswith("---"):
-        end = text.find("\n---", 3)
-        if end != -1:
-            fm = text[3:end].strip("\n")
-            body = text[end + 4 :]
-            return fm.splitlines(), body, True
+    match = re.match(r'\A---[ \t]*\r?\n(.*?)^---[ \t]*(?:\r?\n|\Z)', text, re.S | re.M)
+    if match:
+        return match.group(1).splitlines(), text[match.end():], True
     return [], text, False
 
 

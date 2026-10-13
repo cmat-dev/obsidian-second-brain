@@ -213,9 +213,12 @@ def test_malformed_or_duplicate_headers_fail_safely(values):
     assert responses[0]["status"] == 401
 
 
-def test_live_tools_list_and_disabled_call_with_session_lifespan(server_factory):
+def test_live_tools_list_and_disabled_call_with_session_lifespan(server_factory, tmp_path):
     server = server_factory(OBSIDIAN_MCP_DISABLED_TOOLS="obsidian_move_note")
-    assert os.environ["OBSIDIAN_MCP_REQUIRE_READ_HASH"] == "1"
+    note = tmp_path / 'read-hash.md'
+    note.write_text('body', encoding='utf-8')
+    with pytest.raises(ValueError, match='read the note first'):
+        server.vault_ops._write_snapshot(note)
     with _client(server) as client:
         headers = _initialize(client)
         response = client.post("/mcp", headers=headers, json={
