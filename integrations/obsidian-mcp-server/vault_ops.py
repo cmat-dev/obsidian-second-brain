@@ -48,6 +48,7 @@ _SKIP_DIRS = {".obsidian", ".git", ".trash", "_trash", ".claude", "_export",
 # treats as immutable, and `templates` needs to match the conventional capital-T
 # `Templates/` a bootstrapped vault actually creates - the old guard compared a
 # lowercase set against un-lowercased path parts, so it never matched.
+# New raw sources have one create-only exception through validated source_metadata.
 _PROTECTED_WRITE_DIRS = _SKIP_DIRS | {"raw"}
 
 # Operational logs and immutable raw sources are rarely the *answer* to a query:
@@ -923,6 +924,24 @@ def _bookkeep(vault: Path, action: str, rel: str, description: str, *, summary: 
     return out
 
 
+def _raw_source_module():
+    helper = Path(__file__).with_name('raw_source.py')
+    if not helper.is_file():
+        raise ValueError('raw source helper is missing from this deployment')
+    spec = importlib.util.spec_from_file_location('obsidian_raw_source', helper)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def content_hash(content: str) -> Dict[str, Any]:
+    """Return deterministic exact and canonical hashes without vault access."""
+    try:
+        return _raw_source_module().content_hashes(content)
+    except (ValueError, UnicodeError) as exc:
+        return {'error': str(exc)}
+
+
 def save_note(
     title: str,
     content: str,
@@ -931,21 +950,40 @@ def save_note(
     tags: Optional[List[str]] = None,
     path: Optional[str] = None,
     summary: Optional[str] = None,
+    source_metadata: Optional[Dict[str, str]] = None,
+    canonical_content: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Write an AI-first note to Inbox or an explicit vault-relative path."""
     vault = resolve_vault()
     title = (title or "").strip()
-    content = (content or "").strip()
+    content = content or ""
+    raw_request = source_metadata is not None
+    if not raw_request:
+        content = content.strip()
     if not title or not content:
         return {"error": "title and content are required"}
     note_type = (note_type or "note").strip() or "note"
+    source_fields = {}
+    read_checks = []
+    if canonical_content is not None and not raw_request:
+        return {'error': 'canonical_content is only supported for new raw sources with source_metadata'}
+    if raw_request:
+        if note_type != 'source' or not path:
+            return {'error': 'source_metadata requires type=source and an explicit new raw source path'}
+        try:
+            target, source_fields, read_checks = _raw_source_module().prepare_source(
+                vault, path, content, source_metadata, canonical_content,
+            )
+        except (OSError, ValueError, UnicodeError) as exc:
+            return {'error': str(exc)}
+        tags = list(dict.fromkeys(['source', source_fields['source_type'], *(tags or [])]))
     tags = [str(t) for t in (tags or [note_type])]
     # These strings become YAML, so prevent newlines injecting policy fields.
     if any('\n' in value or '\r' in value for value in [note_type, *tags]):
         return {"error": "type and tags must be single-line values"}
 
     date = datetime.now().strftime("%Y-%m-%d")
-    if path:
+    if path and not raw_request:
         requested = path.strip()
         target = _resolve_in_vault(vault, requested)
         if target is None:
@@ -954,13 +992,13 @@ def save_note(
             return {"error": "path must end in .md"}
         if {p.lower() for p in target.relative_to(vault).parts} & _PROTECTED_WRITE_DIRS:
             return {"error": "path is in a protected directory"}
-    else:
+    elif not path:
         inbox = vault / _NOTES_DIR
         target = inbox / f"{date} - {_slug(title)}.md"
 
-    tag_block = "\n".join(f"  - {t}" for t in tags)
+    tag_block = "\n".join(f"  - {json.dumps(t) if raw_request else t}" for t in tags)
     try:
-        note_body = _prepare_note_content(content, summary)
+        note_body = content if raw_request else _prepare_note_content(content, summary)
     except ValueError as exc:
         return {"error": str(exc)}
     body = (
@@ -971,6 +1009,7 @@ def save_note(
         f"ai-first: true\n"
         f"source: mcp\n"
         + (f"agent: {json.dumps(_agent_name())}\n" if _agent_name() else "") +
+        ''.join(f'{key}: {json.dumps(value)}\n' for key, value in source_fields.items()) +
         f"---\n\n"
         f"{note_body}"
     )
@@ -978,6 +1017,8 @@ def save_note(
     # the same day used to overwrite the first with no error and no backup.
     # Refuse and point at the tool that can actually edit an existing note.
     if target.exists():
+        if raw_request:
+            return {'error': f'raw source already exists at {path}; existing raw sources are immutable'}
         return {
             "error": (
                 f"a note already exists at {target.relative_to(vault).as_posix()}; "
@@ -986,12 +1027,14 @@ def save_note(
         }
     target.parent.mkdir(parents=True, exist_ok=True)
     rel = target.relative_to(vault).as_posix()
-    action = "save" if path else "capture"
-    first = re.sub(r"\s+", " ", content.split("\n", 1)[0]).strip()[:140]
+    action = "ingest" if raw_request else ("save" if path else "capture")
+    first = re.sub(r"\s+", " ", (summary if raw_request and summary else content).split("\n", 1)[0]).strip()[:140]
     tag_note = f" (tags: {', '.join(tags)})" if tags else ""
+    action_word = 'ingested' if raw_request else action + 'd'
     committed = _commit_note(vault, rel, body, None, action,
                              f"{title[:80]} -> [[{rel[:-3]}]]{tag_note}",
-                             summary=f"`type: {note_type}`, {action}d {datetime.now().strftime('%Y-%m-%d %H:%M')} through the MCP server. {first}")
+                             summary=f"`type: {note_type}`, {action_word} {datetime.now().strftime('%Y-%m-%d %H:%M')} through the MCP server. {first}",
+                             read_checks=read_checks)
     if "error" in committed:
         return committed
     result: Dict[str, Any] = {"saved": rel, **committed}
@@ -1525,8 +1568,13 @@ def _bookkeeping_plan(vault: Path, action: str, rel: str, description: str, summ
         report['index'] = 'root note; index.md entries are per folder, none added'
         return writes, report
     folder = rel.rsplit('/', 1)[0]
+    section_heading = folder + '/'
     normal = index_text.lstrip('\ufeff').replace('\r\n', '\n')
     m = re.search(rf'^##\s+{re.escape(folder)}/?\s*$', normal, re.M)
+    if not m and folder in {'raw/articles', 'raw/transcripts', 'raw/pdfs', 'raw/videos'}:
+        m = re.search(r'^##[ \t]+raw[ \t]*$', normal, re.M)
+        if m:
+            section_heading = 'raw'
     if not m:
         report['index'] = f"index.md has no '## {folder}/' section; no entry added"
         return writes, report
@@ -1535,7 +1583,7 @@ def _bookkeeping_plan(vault: Path, action: str, rel: str, description: str, summ
     section = normal[m.end():end]
     link = f'[[{rel[:-3]}]]'
     if link in section:
-        report['index'] = f"index.md '## {folder}/' entry already present"
+        report['index'] = f"index.md '## {section_heading}' entry already present"
         return writes, report
     bullet = f'- {link} - {re.sub(chr(10), " ", summary)}\n'
     bullets = list(re.finditer(r'^- \[\[.*$', section, re.M))
@@ -1546,22 +1594,25 @@ def _bookkeeping_plan(vault: Path, action: str, rel: str, description: str, summ
         updated = normal[:end].rstrip('\n') + '\n\n' + bullet + ('\n' if nxt else '') + normal[end:]
     writes.append({'path': 'index.md', 'expected_sha256': index_hash,
                    'content': _preserve_encoding(index_text, updated)})
-    report['index'] = f"index.md '## {folder}/' entry added"
+    report['index'] = f"index.md '## {section_heading}' entry added"
     return writes, report
 
 
 def _commit_note(vault: Path, rel: str, text: str, expected: Optional[str], action: str,
-                 description: str, *, summary: Optional[str] = None):
+                 description: str, *, summary: Optional[str] = None, read_checks=None):
     """Note + bookkeeping share source hashes, lock, journal and operation ID."""
     try:
         engine = _transaction_engine(vault)
         for attempt in range(3):
             metadata_writes, report = _bookkeeping_plan(vault, action, rel, description, summary)
             writes = [{'path': rel, 'expected_sha256': expected, 'content': text}, *metadata_writes]
-            logical = json.dumps(writes, sort_keys=True, ensure_ascii=False).encode('utf-8')
+            request = {'writes': writes}
+            if read_checks:
+                request['read_checks'] = read_checks
+            logical = json.dumps(request if read_checks else writes, sort_keys=True, ensure_ascii=False).encode('utf-8')
             operation_id = 'mcp-' + hashlib.sha256(logical).hexdigest()
             try:
-                engine.apply(vault, {'operation_id': operation_id, 'writes': writes})
+                engine.apply(vault, {'operation_id': operation_id, **request})
                 if _bookkeeping_enabled():
                     report['transaction_id'] = operation_id
                 if _bookkeeping_enabled() and not _is_bookkeeping_surface(rel):

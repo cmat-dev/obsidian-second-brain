@@ -208,6 +208,9 @@ def test_python_toolkit_ships_with_its_project(built: Path, platform: str) -> No
         assert (mcp_root / "vault_transaction.py").is_file(), (
             f"{platform} ships MCP write tools without their coordinator"
         )
+        assert (mcp_root / "raw_source.py").is_file(), (
+            f"{platform} ships source creation without its validator/hash helper"
+        )
         assert (scripts / "grok_skills.py").is_file(), (
             f"{platform} ships live skill support without the Grok renderer"
         )

@@ -91,6 +91,20 @@ def obsidian_read_note(path: str, offset: int = 0, limit: int = 20_000) -> str:
 
 
 @mcp.tool()
+def obsidian_content_hash(content: str) -> str:
+    """Hash source text without writing or reading the vault.
+
+    Returns exact UTF-8 sha256, canonical_sha256, and its first16 content_hash.
+    Supply extracted article/source text after removing navigation and metadata.
+    Normalization removes a leading BOM, converts CRLF, maps line-start *|+
+    list markers to -, and collapses whitespace. Semantic extraction is supplied
+    by the caller and is not verified by this tool. Use content_hash to check
+    for an existing raw source before creating one.
+    """
+    return json.dumps(vault_ops.content_hash(content))
+
+
+@mcp.tool()
 def obsidian_save_note(
     title: str,
     content: str,
@@ -98,6 +112,8 @@ def obsidian_save_note(
     tags: list[str] | None = None,
     path: str | None = None,
     summary: str | None = None,
+    source_metadata: dict[str, str] | None = None,
+    canonical_content: str | None = None,
 ) -> str:
     """Save a new AI-first note.
 
@@ -107,6 +123,14 @@ def obsidian_save_note(
     content already begins with a legacy or generic future-agent heading, the
     server normalizes it and never duplicates it.
 
+    For a NEW raw source, use type=source, an explicit dated path under
+    raw/articles, transcripts, pdfs or videos, and source_metadata containing
+    source_url, source_type and content_hash (from obsidian_content_hash).
+    Optional metadata: capture_scope and supersedes. The raw body stays verbatim
+    without a preamble. canonical_content optionally supplies the extraction
+    used to calculate the canonical hash while content retains the raw capture.
+    The server records exact body_sha256/hash_basis and forbids metadata overrides.
+
     The result reports the write and its bookkeeping separately: `saved`,
     `validation` (ok, issues), `index` (what happened in index.md), `log` (the
     operation-log file written), and `post_write` when OBSIDIAN_POST_WRITE_CMD
@@ -114,7 +138,8 @@ def obsidian_save_note(
     """
     return json.dumps(
         vault_ops.save_note(
-            title, content, note_type=type, tags=tags, path=path, summary=summary
+            title, content, note_type=type, tags=tags, path=path, summary=summary,
+            source_metadata=source_metadata, canonical_content=canonical_content,
         )
     )
 

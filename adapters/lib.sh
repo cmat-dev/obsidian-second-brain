@@ -362,6 +362,8 @@ copy_vault_ops() {
   # does not supply its own canonical scripts/vault_transaction.py.
   local helper="$1/integrations/obsidian-mcp-server/vault_transaction.py"
   [[ ! -f "$helper" ]] || cp "$helper" "$dst/vault_transaction.py"
+  local raw_helper="$1/integrations/obsidian-mcp-server/raw_source.py"
+  [[ ! -f "$raw_helper" ]] || cp "$raw_helper" "$dst/raw_source.py"
 }
 
 # copy_references_rewritten <src-refs-dir> <dst-refs-dir> <platform_dir>

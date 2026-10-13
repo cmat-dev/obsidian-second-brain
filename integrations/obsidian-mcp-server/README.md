@@ -16,6 +16,7 @@ Data tools (deterministic primitives):
 |---|---|
 | `obsidian_search(query, limit=6)` | Ranked keyword search across vault notes; returns snippets + paths |
 | `obsidian_read_note(path)` | Read a full note by vault-relative path (path-traversal guarded) |
+| `obsidian_content_hash(content)` | Read-only exact UTF-8 SHA-256 and canonical source hash; use its `content_hash` before source deduplication |
 | `obsidian_save_note(title, content, type, tags)` | Save a new AI-first note to the vault `Inbox/`; the result also reports validation, the index entry, the log line and the post-write command (see Bookkeeping) |
 | `obsidian_capture(text, tags)` | Quick-capture an idea as a lightweight `type: idea` note, with the same bookkeeping |
 
@@ -38,6 +39,50 @@ Skill tools (the higher-level behaviors, per Issue #60 - "use the skills, not ju
 The skill tools expose the command playbooks (e.g. `obsidian-ingest`, `idea-discovery`, `obsidian-find`) so the connecting agent runs the real skill behavior with its own model - ingest, for instance, is multi-step (it rewrites and links existing pages), so it runs as an agent-executed skill rather than a single function. Niche / agent-only / Claude-only commands (challenge, health, the scheduled agents, and the Google Calendar commands) are excluded from the exposed set. Override the commands source with `OBSIDIAN_COMMANDS_DIR` if the server is deployed away from the repo.
 
 Saved notes follow `references/ai-first-rules.md` (frontmatter, `## For future agent` preamble, `source: mcp` marker) so connector-written notes are distinguishable from hand-authored ones.
+
+### Create immutable raw sources
+
+`obsidian_save_note` can create a new raw source when `type="source"`,
+`source_metadata` is provided, and `path` is an explicit
+`raw/articles|transcripts|pdfs|videos/YYYY-MM-DD - Title.md` path. This is a
+create-only exception: existing raw notes remain protected from updates,
+replacement and moves. Ordinary saves cannot write to `raw/`.
+
+Before creation, call `obsidian_content_hash` on the source text extracted from
+the article, transcript or document, then search for its returned `content_hash`
+and read any matches. The hash tool returns `sha256` for the exact UTF-8 input,
+`canonical_sha256`, and the first 16 characters of the canonical hash as
+`content_hash`. Canonical normalization removes a leading BOM, converts CRLF to
+LF, converts line-start `*` and `+` list markers to `-`, collapses whitespace,
+and trims it. Article-body extraction, including removal of navigation and
+metadata, is supplied by the agent; the server does not verify that semantic
+choice. No shell or invented hash is needed.
+
+The `source_metadata` object allows only these string fields:
+
+| Field | Rule |
+|---|---|
+| `source_url` | Required; HTTP(S) URL, or an empty string for local/pasted text |
+| `source_type` | Required; `article`, `pdf`, `transcript`, `video`, `audio`, `image` or `text` |
+| `content_hash` | Required; copy the canonical 16-character hash returned by the hash tool |
+| `capture_scope` | Optional; `full-local`, `bounded-local` or `url-only`; the last requires a URL |
+| `supersedes` | Optional; one explicit wikilink to an existing different raw source |
+
+Pass the retained verbatim capture as `content`. If the extracted article text
+differs from that capture, also pass it as `canonical_content`. The declared
+hash must match the same normalization of `canonical_content`, or of `content`
+when no extraction is supplied. The server preserves the retained body exactly,
+including BOM and line endings, adds no preamble, and records server-owned
+`body_sha256` and `hash_basis` (`body` or `provided-extraction`). Source metadata
+cannot override type, date, tags, agent or other server fields. `summary`, when
+provided for a raw source, informs the catalog description only.
+
+A `supersedes` reference must stay in the four raw-source folders and cannot
+use a symlink or reparse point. It is a hash-checked read dependency of the
+creation transaction; the older source is never changed. New source, catalog
+entry and log line share the same create-only transaction. The catalog uses an
+explicit folder section when present, or the supported `## raw` section for
+these source folders. Missing sections are reported rather than guessed.
 
 ## Bookkeeping after writes
 

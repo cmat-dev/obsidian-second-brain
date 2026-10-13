@@ -280,7 +280,7 @@ def test_real_stdio_handshake_still_works_without_http_key(tmp_path):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 tools = await session.list_tools()
-                assert len(tools.tools) == 12
+                assert len(tools.tools) == 13
                 assert "obsidian_move_note" in {tool.name for tool in tools.tools}
                 result = await session.call_tool("obsidian_read_note", {"path": "note.md"})
                 assert not result.isError
