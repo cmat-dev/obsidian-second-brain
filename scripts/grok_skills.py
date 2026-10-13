@@ -82,7 +82,11 @@ run a shell recipe. Preserve the captured source body exactly in `content`.
 Create a source only at an explicit new dated `.md` path in `raw/articles`,
 `raw/transcripts`, `raw/pdfs`, or `raw/videos`, with `type="source"` and
 `source_metadata` containing `source_url`, `source_type`, and the returned
-`content_hash`. A local or pasted source may have an empty `source_url`.
+`content_hash`. Supported `source_type` values are `article`, `pdf`, `transcript`,
+`video`, `audio`, `image`, and `text`. A local or pasted source may have an empty
+`source_url`. For a changed source, an optional `supersedes` must name the exact
+existing raw note as `[[raw/articles/Old source]]` (or another allowed source
+folder); the old note stays unchanged.
 If the captured body differs from the canonical extraction, also pass that
 extraction as `canonical_content`; the server records the hash basis and the
 saved body's own hash separately. Use actual extracted text, for example article
