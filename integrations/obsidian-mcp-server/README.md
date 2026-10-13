@@ -59,6 +59,56 @@ export OBSIDIAN_VAULT_PATH="/path/to/your/vault"
 uv run --no-project --with 'mcp<2' python integrations/obsidian-mcp-server/server.py
 ```
 
+### Authenticated Streamable HTTP
+
+Stdio remains the default. For a remote client, run the server behind a TLS
+proxy such as Tailscale Funnel. HTTP mode is tested with the official Python
+SDK `mcp==1.30.0`; use `mcp>=1.30,<2` for this transport.
+
+```bash
+export OBSIDIAN_VAULT_PATH="/path/to/synced/vault"
+export OBSIDIAN_MCP_TRANSPORT=streamable-http
+export OBSIDIAN_MCP_HOST=127.0.0.1
+export OBSIDIAN_MCP_PORT=8420
+export OBSIDIAN_MCP_PUBLIC_URL="https://your-server.your-tailnet.ts.net"
+export OBSIDIAN_MCP_DISABLED_TOOLS=obsidian_move_note
+export OBSIDIAN_MCP_ALLOW_FRONTMATTER=0
+export OBSIDIAN_MCP_AGENT=grok-bot
+export OBSIDIAN_SKILL_FLAVOR=grok-bot
+# Set OBSIDIAN_MCP_API_KEY from the private service environment file.
+uv run --no-project --with 'mcp>=1.30,<2' python integrations/obsidian-mcp-server/server.py
+```
+
+The MCP endpoint is `/mcp`. Every HTTP request except `GET /health` and
+`HEAD /health` requires `Authorization: Bearer <key>`, including requests
+within an existing MCP session. Tokens are compared in constant time. Missing,
+wrong, malformed and duplicate authorization headers receive `401` without
+reaching the MCP application. `/health` returns only `{"status":"ok"}`.
+The API key is required before HTTP startup and must contain visible ASCII
+characters without spaces. Keep its generated value out of the vault, logs,
+repository and chat; store it in the private service environment file.
+
+Only literal loopback IP addresses can be bound. The port must be from 1 to
+65535. `OBSIDIAN_MCP_PUBLIC_URL` is optional for local testing, but a TLS proxy
+that forwards its public hostname needs it. Use an HTTPS origin with no `/mcp`
+path, credentials, query or fragment. The configured public hostname and origin
+are added to FastMCP's allowlist; DNS rebinding protection remains enabled.
+
+`OBSIDIAN_MCP_DISABLED_TOOLS` is a comma-separated list of exact tool names.
+Disabled tools disappear from `tools/list` and cannot be called. Unknown names
+or malformed lists refuse startup so a misspelling cannot silently weaken the
+policy. There are no standalone delete, frontmatter-update or tag-management
+tools in this server. `OBSIDIAN_MCP_ALLOW_FRONTMATTER=0` separately blocks the
+`set_fields` argument on `obsidian_update_note`.
+
+HTTP mode enforces `OBSIDIAN_MCP_REQUIRE_READ_HASH=1`. Read the current note
+with `obsidian_read_note`, then pass its full-file `sha256` as
+`expected_sha256` to `obsidian_update_note`, `obsidian_replace_text`, or
+`obsidian_move_note` when that tool is enabled. A stale hash refuses the write;
+re-read and redo the change. New notes remain create-only. Stdio has no HTTP
+authentication requirement and ignores the HTTP-only host, port and public URL
+settings.
+
 ## Wire it into a client
 
 Hermes Agent and most MCP clients take a launch command. Example client config entry:
@@ -93,6 +143,17 @@ Live-test checklist:
   - [x] Client lists the three tools.
   - [x] Client calls `obsidian_search` (results), `obsidian_read_note` (content), `obsidian_save_note` (writes a valid AI-first note to `Inbox/`). Verified 2026-06-06 via `live_test.py` against both a throwaway vault and a real vault (read-only).
   - [ ] Connect from a real Hermes instance and confirm the tools appear via `discover_mcp_tools()`.
+
+Transport regressions use a throwaway vault and synthetic keys, with a real
+FastMCP ASGI handshake, session, `tools/list`, disabled-tool call and stdio
+subprocess round-trip:
+
+```bash
+uv run --no-project --with 'mcp>=1.30,<2' --with pytest python -m pytest -q tests/test_mcp_http.py
+```
+
+The configuration/auth-wrapper tests run without MCP installed. Live protocol
+tests require the MCP package and are skipped when it is absent.
 
 ## Notes
 
