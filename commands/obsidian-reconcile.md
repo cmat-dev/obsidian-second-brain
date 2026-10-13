@@ -2,6 +2,7 @@
 description: Find and resolve contradictions in the vault - the vault maintains its own truth
 category: thinking
 triggers_en: ["find contradictions", "reconcile vault", "fix conflicts", "vault contradictions"]
+triggers_de: ["Widersprüche finden", "Vault abgleichen", "Konflikte lösen", "Widersprüche im Vault"]
 triggers_es: ["busca contradicciones", "concilia el vault", "resuelve los conflictos", "contradicciones en el vault"]
 triggers_pt: ["encontre contradições", "reconcilie o vault", "corrija conflitos", "contradições do vault"]
 triggers_zh: ["找出知识库里的矛盾", "解决笔记之间的冲突", "核对相互矛盾的说法", "让知识库里的事实保持一致"]
@@ -16,7 +17,7 @@ The optional argument is a topic or entity to focus on. If not provided, scan th
 
 3. Spawn parallel subagents to find contradictions:
    - **Claims agent**: scan the concepts and projects folders (resolved per `references/folder-map.md`) for factual claims - find pairs that contradict each other
-   - **Entity agent**: scan the entities folder (resolved per `references/folder-map.md`) for outdated roles, companies, or descriptions that conflict with newer sources
+   - **Entity agent**: scan the entities folders (resolved per `references/folder-map.md`, which gives Obsidian-style vaults a separate folder for some entity kinds) for outdated roles, companies, or descriptions that conflict with newer sources
    - **Decisions agent**: scan the decisions folder (resolved per `references/folder-map.md`) and project Key Decisions for reversed or superseded decisions that were never updated
    - **Source freshness agent**: compare `raw/` source dates against `wiki/` page dates - flag wiki pages that reference old sources when newer ones exist on the same topic
 

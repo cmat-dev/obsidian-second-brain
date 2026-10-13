@@ -148,13 +148,13 @@ Free transcript via youtube-transcript-api. Optional metadata + top comments via
 |---|---|---|
 | Saving decisions | Copy-paste or lose them | Auto-saved to the right project note |
 | Daily notes | Write it yourself, forget half the time | Created automatically |
-| Finding patterns | Re-read dozens of notes | `/emerge` finds them for you |
-| Challenging yourself | Nobody pushes back | `/challenge` uses your own history against you |
-| Session continuity | Re-explain every time | `/world` loads full context in 10 seconds |
-| Ingesting content | Read it, forget it | `/ingest` rewrites 5-15 vault pages from 1 source (URLs, PDFs, audio, screenshots) |
-| Contradictions | You don't know they exist | `/reconcile` resolves them automatically |
-| Synthesis | You connect dots manually | `/synthesize` finds patterns across sources on its own |
-| Sharing vault data | Only Claude can read it | `/export` gives any AI tool a clean snapshot |
+| Finding patterns | Re-read dozens of notes | `/obsidian-emerge` finds them for you |
+| Challenging yourself | Nobody pushes back | `/obsidian-challenge` uses your own history against you |
+| Session continuity | Re-explain every time | `/obsidian-world` loads full context in 10 seconds |
+| Ingesting content | Read it, forget it | `/obsidian-ingest` rewrites 5-15 vault pages from 1 source (URLs, PDFs, audio, screenshots) |
+| Contradictions | You don't know they exist | `/obsidian-reconcile` resolves them automatically |
+| Synthesis | You connect dots manually | `/obsidian-synthesize` finds patterns across sources on its own |
+| Sharing vault data | Only Claude can read it | `/obsidian-export` gives any AI tool a clean snapshot |
 | Facts change over time | Old info gets overwritten | Bi-temporal facts track when it was true AND when the vault learned it |
 | Starting a new session | Re-explain who you are | `CRITICAL_FACTS.md` loads your identity in ~120 tokens |
 | Reading an X thread | Open X, scroll, screenshot, paste | `/x-read [url]` returns post + thread + sentiment + voices |
@@ -237,7 +237,7 @@ Free transcript via youtube-transcript-api. Optional metadata + top comments via
 ```
   +------------------------------------------+
   |                                          |
-  |   LAYER 1: Operations (28 commands)      |
+  |   LAYER 1: Operations (30 commands)      |
   |   Claude remembers everything            |
   |                                          |
   +------------------------------------------+
@@ -524,7 +524,7 @@ This vault rewrites itself with every input:
 
 The vault after a week is fundamentally different from the vault you started with.
 
-**The maintenance layer has a name: OKM (Open Knowledge Metabolism).** Storage is the easy half; keeping stored knowledge *true* is the hard half, and it is where this project spends its effort. OKM is the open spec behind that: **every stored fact must be timeless, dated, or a pointer.** Slow-changing knowledge (how things work, decisions, ownership) is stored; fast-changing facts (counts, statuses, balances) are linked to where they live with an `as of` stamp, never copied in to rot. The rule is a one-page spec ([references/freshness-policy.md](references/freshness-policy.md)), enforced by a linter ([scripts/freshness_lint.py](scripts/freshness_lint.py)) that `/obsidian-health` runs. Where OKF (Google's Open Knowledge Format) standardizes how agent knowledge is *written*, OKM is a companion spec for keeping it *true* - the metabolism to OKF's format. One spec, one reference linter, no second implementation yet. It is storage-agnostic: any folder of markdown an AI maintains, not just Obsidian vaults.
+**The maintenance layer has a name: OKM (Open Knowledge Metabolism).** Storage is the easy half; keeping stored knowledge *true* is the hard half, and it is where this project spends its effort. OKM is the open spec behind that: **every stored fact must be timeless, dated, or a pointer.** Slow-changing knowledge (how things work, decisions, ownership) is stored; fast-changing facts (counts, statuses, balances) are linked to where they live with an `as of` stamp, never copied in to rot. The rule is a one-page spec ([references/freshness-policy.md](references/freshness-policy.md)), enforced by a linter ([scripts/freshness_lint.py](scripts/freshness_lint.py)) that `/obsidian-health` runs. It is the companion to OKF (Google's Open Knowledge Format), and the division is sharper than format-versus-freshness: OKF v0.2 added fields for recording that something went stale (`status`, `stale_after`, `verified`), but a field cannot stop a note claiming "the pipeline has 13 deals" with no stamp on it. OKM is the *rule* about what may be stored bare at all, and a linter that fails the build when it is not. One spec, one reference linter, no second implementation yet. It is storage-agnostic: any folder of markdown an AI maintains, not just Obsidian vaults.
 
 ---
 
@@ -544,6 +544,12 @@ uv run python scripts/bootstrap_vault.py --path ~/my-vault --name "Your Name" --
 ```
 
 No preset? You get a general-purpose vault that works for everyone.
+
+Every preset builds the Obsidian-style layout (`Daily/`, `People/`, `Projects/`, ...). Add `--style wiki` for the wiki-style layout described under [Vault Architecture](#vault-architecture):
+
+```bash
+uv run python scripts/bootstrap_vault.py --path ~/my-vault --name "Your Name" --preset builder --style wiki
+```
 
 ---
 
@@ -574,7 +580,9 @@ PostCompact -> obsidian-bg-agent.sh -> claude -p (headless) -> vault updated
 
 ## Vault Architecture
 
-### Wiki-style (default) -- LLM-first
+Two layouts are supported. `scripts/bootstrap_vault.py` builds the Obsidian-style layout by default: `Daily/`, `People/`, `Projects/` and the preset's topic folders such as `Goals/` and `Mentions/`, as laid out in [references/vault-schema.md](references/vault-schema.md). Pass `--style wiki` for the wiki-style layout below. A preset folder the wiki layout renames moves to that name (`People/` to `wiki/entities/`, `Ideas/` and `Knowledge/` to `wiki/concepts/`); one it does not rename keeps its own name under `wiki/` (`Goals/` to `wiki/goals/`, `Sources/` to `wiki/sources/`), so a preset builds the same vault in either layout.
+
+### Wiki-style -- LLM-first
 
 Claude is the reader and writer. The vault is a database.
 
@@ -643,7 +651,7 @@ That ships all 47 commands, the skill manual, the session-context hook, the opt-
 "env": { "OBSIDIAN_VAULT_PATH": "/path/to/your/vault" }
 ```
 
-Restart Claude Code, then run `/obsidian-second-brain:obsidian-init` inside your vault. Plugin commands are namespaced, so every command is `/obsidian-second-brain:<name>` (type `/obsidian-second-brain:` to see all 45). Update later with `/plugin update obsidian-second-brain`.
+Restart Claude Code, then run `/obsidian-second-brain:obsidian-init` inside your vault. Plugin commands are namespaced, so every command is `/obsidian-second-brain:<name>` (type `/obsidian-second-brain:` to see all 47). Update later with `/plugin update obsidian-second-brain`.
 
 **Classic install (script).** Use this if you want the commands as bare names (`/obsidian-init`, `/research`, ...) or you are developing the skill and want live edits. One line (clones the skill, installs the slash commands, registers the session-context hook, and offers the research env):
 
@@ -714,7 +722,7 @@ bash scripts/build.sh --platform pi
 pi install ./dist/pi          # or: cp -R dist/pi/.pi/ /path/to/your/vault/
 ```
 
-The **Pi build emits a native [Pi](https://pi.dev) package**: prompt templates under `.pi/prompts/` (invoke as `/obsidian-save`, `/obsidian-daily`, etc.) plus a discovery skill under `.pi/skills/obsidian-second-brain/` (load with `/skill:obsidian-second-brain`). Pi reads the same `~/.config/obsidian-second-brain/.env` keys as the other platforms. It has no background-agent equivalent - run `/obsidian-nightly` manually or via cron. (Contributed by @Gepetdo.)
+The **Pi build emits a native [Pi](https://pi.dev) package**: prompt templates under `.pi/prompts/` (invoke as `/obsidian-save`, `/obsidian-daily`, etc.) plus a discovery skill under `.pi/skills/obsidian-second-brain/` (load with `/skill:obsidian-second-brain`). Pi reads the same `~/.config/obsidian-second-brain/.env` keys as the other platforms. It has no background-agent equivalent, and the scheduled agents (`obsidian-nightly` and the others) are prompts, not commands, so Pi has no `/obsidian-nightly` to type. To run one, copy its prompt from the scheduled agents section of `SKILL.md` into a Pi session, by hand or from your own scheduler. (Contributed by @Gepetdo.)
 
 ### Grok Bot / Sand
 
@@ -737,6 +745,8 @@ There is also a dedicated **Hermes Agent build** that emits the commands as nati
 bash scripts/build.sh --platform hermes
 # then follow dist/hermes/INSTALL.md (copy into ~/.hermes/skills/ or add as a tap)
 ```
+
+Do not run `hermes plugins install` on this repo's URL. The repo root is not a Hermes plugin (it has no `plugin.yaml`), and Hermes reports success anyway while registering nothing ([#298](https://github.com/eugeniughelbur/obsidian-second-brain/issues/298)). Use the skills build above.
 
 This is the skill/playbook half of the Hermes work; the bounded vault-data half is the [MCP connector](integrations/obsidian-mcp-server/). Native cron and lifecycle-hook integration are tracked in [Issue #79](https://github.com/eugeniughelbur/obsidian-second-brain/issues/79).
 
@@ -823,7 +833,7 @@ Two ways to provide the embedding model:
 
 **Keep it current.** The index does not update itself, and a note that is not in it can only be found by literal word match - which on a query in another language means it cannot be found at all. Re-run `--build` regularly; it is incremental, so only new and changed notes re-embed. `/obsidian-health` reports coverage, and search warns on stderr once the index falls more than 5% behind (tune with `OBSIDIAN_INDEX_STALE_WARN_PCT`).
 
-Knobs: `OBSIDIAN_SEARCH_SEMANTIC=0` disables the layer entirely. The index file is large and regenerable - gitignore it.
+Knobs: `OBSIDIAN_SEARCH_SEMANTIC=0` disables the layer entirely. `OBSIDIAN_EMBED_MAX_CHUNKS=<n>` raises the per-note embedding cap from the default 8 chunks (~9,600 characters); a long-form vault of research dossiers or book-length notes embeds more of each note at the cost of a slower build, and text past the cap is not embedded. A value below 1 or one that is not a number falls back to 8 and says so on stderr, because the cap is applied as a slice: `0` would embed nothing and drop the note from the index. `OBSIDIAN_RRF_LEX_DEPTH=<n>` caps how many lexical results get a vote in the hybrid fusion (default 25, which caps nothing); lower it to 5-10 when a tail of term-frequency matches pushes an exact match out of the top results (#262). The index file is large and regenerable - gitignore it.
 
 ---
 
@@ -869,7 +879,7 @@ The principle that vault notes are written for future agent to retrieve and reas
 Yes. The skill never deletes or modifies notes destructively without explicit confirmation. Existing notes stay as-is. New notes follow the AI-first rule. `/obsidian-health` flags pre-AI-first notes so you can update them on your own schedule.
 
 ### What is OKM (Open Knowledge Metabolism)?
-The maintenance layer, given a name. Its one rule: every stored fact must be timeless, dated, or a pointer - so a knowledge folder can never quietly fill with facts that used to be true. Slow knowledge is stored; fast facts are linked to their live source with an `as of` stamp instead of copied in. It ships as a one-page spec ([`references/freshness-policy.md`](references/freshness-policy.md)) and a stdlib-only linter ([`scripts/freshness_lint.py`](scripts/freshness_lint.py)) that `/obsidian-health` runs, and it is storage-agnostic (any markdown folder an AI maintains). Think of it as the companion to OKF (Open Knowledge Format): OKF standardizes how knowledge is written, OKM keeps it true.
+The maintenance layer, given a name. Its one rule: every stored fact must be timeless, dated, or a pointer - so a knowledge folder can never quietly fill with facts that used to be true. Slow knowledge is stored; fast facts are linked to their live source with an `as of` stamp instead of copied in. It ships as a one-page spec ([`references/freshness-policy.md`](references/freshness-policy.md)) and a stdlib-only linter ([`scripts/freshness_lint.py`](scripts/freshness_lint.py)) that `/obsidian-health` runs, and it is storage-agnostic (any markdown folder an AI maintains). Think of it as the companion to OKF (Open Knowledge Format). OKF v0.2 gives you fields for recording staleness (`status`, `stale_after`, `verified`); OKM is the rule about what may be stored bare in the first place, plus the linter that fails the build when it is not.
 
 ### What does `/research-deep` do that `/research` doesn't?
 `/research` runs a single Perplexity query and returns a dossier with citations. `/research-deep` is vault-first: it scans your existing notes, identifies what you already know about the topic, spawns 3-5 targeted follow-up searches to fill only the gaps, and produces a delta report (what's new, what's confirmed, contradictions to resolve, recommended vault updates). Vault-first means you stop re-researching what's already in your notes.
@@ -886,6 +896,13 @@ Since #248 the research toolkit (`/research`, `/research-deep`, `/x-pulse`, `/yo
 ### Can I have a separate vault per project (multi-repo workflows)?
 Yes. The default `scripts/setup.sh` writes `OBSIDIAN_VAULT_PATH` globally to `~/.claude/settings.json`, but every hook in this skill reads that env var at fire-time. Claude Code merges per-project `.claude/settings.json` on top of the global one, so you can put `{"env": {"OBSIDIAN_VAULT_PATH": "/path/to/repo-vault"}}` in each repo's `.claude/settings.json` and Claude will use that repo's vault whenever you launch a session from that directory. The slash commands and hooks remain globally installed; only the vault path changes. Full recipe in [`SKILL.md`](SKILL.md#per-project-vaults-multi-repo-workflows). One thing this does NOT give you: isolation within a single vault (no `--scope` on commands yet).
 
+### Can I run this alongside another Obsidian plugin?
+Yes, and nothing breaks at the hook level. Claude Code merges hook entries instead of replacing them, and "All matching hooks run in parallel" ([docs](https://code.claude.com/docs/en/hooks)). Both SessionStart hooks fire and both outputs reach your context.
+
+The cost is a schema clash, not a crash. Each plugin states its own folder map and frontmatter fields for the same vault, so a note can land under either one. Since #300 this skill detects the other hook and opens its injected context with a precedence note naming what it found, and the vault's own `_CLAUDE.md` governs every write. It detects only. Your other plugin is never edited, disabled or unregistered.
+
+To see what a session would find, run `python scripts/vault_plugin_scan.py`. To run only one system, remove the other plugin or its hook entry yourself.
+
 ### How do I update to the latest version?
 ```bash
 cd ~/.claude/skills/obsidian-second-brain && git pull
@@ -893,7 +910,7 @@ cd ~/.claude/skills/obsidian-second-brain && git pull
 On Linux/macOS: nothing else to run - slash commands are symlinked so they pick up the new files automatically. On Windows: also run `bash update.sh` to refresh the copied command files. Restart Claude Code after either path. See [CHANGELOG.md](CHANGELOG.md) for what's in each release.
 
 ### Where do I file issues or feature requests?
-Command reference: https://eugeniughelbur.github.io/obsidian-second-brain/ - every command, with the plain-language phrases that trigger it in English, Spanish, Portuguese and Simplified Chinese.
+Command reference: https://eugeniughelbur.github.io/obsidian-second-brain/ - every command, with the plain-language phrases that trigger it in English, German, Spanish, Portuguese and Simplified Chinese.
 
 Retrieval benchmark: [scripts/eval/BENCHMARK.md](scripts/eval/BENCHMARK.md) - a reproducible 300-note synthetic corpus and three query sets, so the search numbers are something you can run yourself rather than something this README claims.
 

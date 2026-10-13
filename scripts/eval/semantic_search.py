@@ -49,9 +49,12 @@ EMBED_MODEL = os.environ.get("OBSIDIAN_EMBED_MODEL", "bge-m3")
 EMBED_BACKEND = os.environ.get("OBSIDIAN_EMBED_BACKEND", "ollama").lower()
 EMBED_URL = os.environ.get("OBSIDIAN_EMBED_URL", OLLAMA_URL).rstrip("/")
 EMBED_KEY = os.environ.get("OBSIDIAN_EMBED_KEY", "")
-EXCLUDE_PREFIXES = tuple(
-    p.strip() for p in os.environ.get("OBSIDIAN_EMBED_EXCLUDE", "").split(",") if p.strip()
-)
+# Parsed in scripts/vault_scan.py, which vault_health's coverage check shares, so
+# a note excluded here is never reported as missing from the index (#273).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from vault_scan import embed_exclude_prefixes, is_embed_excluded  # noqa: E402
+
+EXCLUDE_PREFIXES = embed_exclude_prefixes()
 # Single source of truth: the MCP server owns the skip set, so the semantic
 # index and the lexical scan can never drift into different universes
 # (stress-test fix 10/24).
@@ -64,7 +67,39 @@ INDEX_FILE = ".obsidian-semantic-index.json"  # written at vault root
 # must be split into safe chunks and averaged, or the model 500s. ~1200 chars sits
 # well under the limit; capping the chunk count bounds time on huge notes.
 _CHUNK_CHARS = 1200
-_MAX_CHUNKS = 8
+# 8 chunks (~9.6k chars) bounds build time on huge notes and suits most vaults.
+# Long-form vaults - research dossiers, book-length notes - can raise it, at the
+# cost of a slower build; text past the cap is not embedded.
+_MAX_CHUNKS_DEFAULT = 8
+
+
+def _read_max_chunks(raw: str | None) -> int:
+    """OBSIDIAN_EMBED_MAX_CHUNKS, or the default when it is not a usable count.
+
+    The cap is applied as `chunks[:_MAX_CHUNKS]`, so a bad value fails silently
+    and destructively rather than loudly: `0` embeds nothing and the note is
+    dropped from the index as unembeddable, and `-1` quietly drops the last
+    chunk of every long note. Both look like a working build. Anything that is
+    not an integer of 1 or more falls back to the default and says so once on
+    stderr.
+    """
+    if raw is None or not raw.strip():
+        return _MAX_CHUNKS_DEFAULT
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        value = 0
+    if value < 1:
+        print(
+            f"[semantic] OBSIDIAN_EMBED_MAX_CHUNKS={raw.strip()!r} is not a chunk "
+            f"count of 1 or more - using the default {_MAX_CHUNKS_DEFAULT}.",
+            file=sys.stderr,
+        )
+        return _MAX_CHUNKS_DEFAULT
+    return value
+
+
+_MAX_CHUNKS = _read_max_chunks(os.environ.get("OBSIDIAN_EMBED_MAX_CHUNKS"))
 
 
 # --------------------------------------------------------------------------- #
@@ -254,7 +289,7 @@ def _content_hash(text: str) -> str:
 
 
 def _excluded(rel: str) -> bool:
-    return any(rel == p or rel.startswith(p) for p in EXCLUDE_PREFIXES)
+    return is_embed_excluded(rel, EXCLUDE_PREFIXES)
 
 
 # --------------------------------------------------------------------------- #
@@ -338,7 +373,14 @@ def build_index(vault: Path, verbose: bool = True) -> dict:
             print(f"  embedded {embedded} notes...", file=sys.stderr)
 
     out = {"model": EMBED_MODEL, "format": 2, "notes": new}
-    index_path.write_text(json.dumps(out), encoding="utf-8")
+    # ensure_ascii=False (#259): the default escapes every non-ASCII note path
+    # to \uXXXX, and vault_health's coverage check reads keys out of this file
+    # with a streamed regex rather than json.load - it never decodes escapes, so
+    # a Cyrillic or CJK title was counted as missing from an index that held it
+    # (552-note vault: 296 reported missing, 0 actually were). Every other JSON
+    # writer in this repo already passes ensure_ascii=False; this one was the
+    # outlier. It also makes a 26MB index file readable.
+    index_path.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
     if verbose:
         total_eligible = len(new) + failed
         pct = (100.0 * len(new) / total_eligible) if total_eligible else 100.0
