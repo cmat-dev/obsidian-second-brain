@@ -109,7 +109,7 @@ def rewrite_body(text: str) -> str:
         (r"(?<!\w)/((?:obsidian-|vault-deep-|idea-discovery|research(?:-deep)?|notebooklm|youtube|x-read|x-pulse|podcast|create-command)[a-z0-9-]*)",
          r"\1"),
         (r"\.claude/commands/([a-z0-9-]+)\.md", r'`obsidian_get_skill("\1")`'),
-        (r"SKILL_ROOT", "the server-side obsidian-core directory (no shell tool is exposed)"),
+        (r"SKILL_ROOT", "skills/obsidian-core"),
         (r"its absolute path was given at session start as \*\*Skill root\*\*",
          "this server-side path is not a client filesystem path"),
     )

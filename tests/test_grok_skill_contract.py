@@ -103,3 +103,9 @@ def test_rules_are_rewritten_without_dropping_the_safety_requirement():
     )
     assert "subagent" not in text
     assert "untrusted data" in text and "AI-first vault rule" in text
+
+
+def test_skill_root_rewrite_keeps_a_resolvable_reference_path():
+    text = grok_skills.rewrite_body("Read `SKILL_ROOT/references/folder-map.md`.")
+    assert "`skills/obsidian-core/references/folder-map.md`" in text
+    assert "exposed)" not in text
