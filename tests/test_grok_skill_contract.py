@@ -109,3 +109,13 @@ def test_skill_root_rewrite_keeps_a_resolvable_reference_path():
     text = grok_skills.rewrite_body("Read `SKILL_ROOT/references/folder-map.md`.")
     assert "`skills/obsidian-core/references/folder-map.md`" in text
     assert "exposed)" not in text
+
+
+def test_source_ingest_describes_server_hashes_and_create_only_provenance():
+    text = grok_skills.preamble()
+    assert "obsidian_content_hash(content)" in text
+    assert "source_metadata, canonical_content" in text
+    assert "canonical extracted text" in text and "Do not invent a hash" in text
+    assert 'type="source"' in text and "captured source body exactly" in text
+    assert "hash basis" in text and "body's own hash separately" in text
+    assert "Existing raw sources\nare immutable" in text

@@ -7,8 +7,8 @@
 # platform-neutral commands/ into Grok-runnable SKILL.md files.
 #
 # Emits, at the dist root:
-#   skills/<name>/SKILL.md        - one skill per command (45; calendar is
-#                                   excluded). Frontmatter is name + description
+#   skills/<name>/SKILL.md        - one skill per included command.
+#                                   Frontmatter is name + description
 #                                   (when to use). Body tells the agent to use
 #                                   MCP obsidian_* tools for all vault I/O.
 #   skills/obsidian-core/         - the shared engine skill carrying references/,
@@ -23,8 +23,8 @@
 #     non-negotiable write spec survives even a cherry-picked install.
 #   - The trigger policy (proactive vs explicit) is encoded in each description.
 #   - Grok Bot has no hook runtime, so no SessionStart or PostToolUse hooks.
-#   - Python-backed research commands still need the scripts/ directory accessible;
-#     the preamble tells the agent how to resolve that path.
+#   - Bundled scripts are support files, not a remote shell. Commands needing an
+#     unavailable execution capability report the specific gap in the preamble.
 # =============================================================================
 
 GROK_PLATFORM="grok-bot"

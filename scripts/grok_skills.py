@@ -15,7 +15,8 @@ import sys
 TOOL_SIGNATURES = {
     "obsidian_search": "query, limit",
     "obsidian_read_note": "path, offset, limit",
-    "obsidian_save_note": "title, content, type, tags, path, summary",
+    "obsidian_content_hash": "content",
+    "obsidian_save_note": "title, content, type, tags, path, summary, source_metadata, canonical_content",
     "obsidian_update_note": "path, append, heading, set_fields, expected_sha256",
     "obsidian_replace_text": "path, old_text, new_text, expected_sha256",
     "obsidian_move_note": "source, destination, expected_sha256",
@@ -30,6 +31,7 @@ TOOL_SIGNATURES = {
 _TOOL_PURPOSES = (
     "search the vault; results may be capped",
     "read a note; follow next_offset until EOF",
+    "hash provided source text for ingest deduplication; no vault write",
     "create a new note; use type, never note_type",
     "append or apply permitted scalar frontmatter changes to an existing note",
     "replace one unique exact anchor in an existing note",
@@ -72,6 +74,23 @@ write, call `obsidian_validate_note` for the written path and inspect the
 bookkeeping result. A saved note does not prove its index and log updates passed.
 Vault policy controls which fields or operations are allowed; a tool's presence
 does not grant permission.
+
+**Source ingest.** Before deduplicating an extracted source, pass
+the canonical extracted text to `obsidian_content_hash` and use its returned
+`content_hash` in the vault search and source metadata. Do not invent a hash or
+run a shell recipe. Preserve the captured source body exactly in `content`.
+Create a source only at an explicit new dated `.md` path in `raw/articles`,
+`raw/transcripts`, `raw/pdfs`, or `raw/videos`, with `type="source"` and
+`source_metadata` containing `source_url`, `source_type`, and the returned
+`content_hash`. A local or pasted source may have an empty `source_url`.
+If the captured body differs from the canonical extraction, also pass that
+extraction as `canonical_content`; the server records the hash basis and the
+saved body's own hash separately. Use actual extracted text, for example article
+text with navigation removed; a URL alone is not an extraction. Preserve URL-only
+or bounded capture limits
+in `capture_scope` rather than claiming a full extraction. Existing raw sources
+are immutable: deduplicate before creation and never overwrite, append, patch,
+or change their frontmatter.
 
 **Execution limits.** Perform each work group yourself, in sequence. Do not spawn
 agents or separate processes. This toolkit has no shell or general filesystem
