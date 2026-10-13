@@ -91,8 +91,9 @@ If the captured body differs from the canonical extraction, also pass that
 extraction as `canonical_content`; the server records the hash basis and the
 saved body's own hash separately. Use actual extracted text, for example article
 text with navigation removed; a URL alone is not an extraction. Preserve URL-only
-or bounded capture limits
-in `capture_scope` rather than claiming a full extraction. Existing raw sources
+or bounded capture limits in claims derived from it. Set `capture_scope` to
+`full-local`, `bounded-local`, or `url-only` from the text actually retained.
+Existing raw sources
 are immutable: deduplicate before creation and never overwrite, append, patch,
 or change their frontmatter.
 
