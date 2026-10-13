@@ -358,6 +358,10 @@ copy_vault_ops() {
   [[ -f "$src" ]] || return 0
   mkdir -p "$dst"
   cp "$src" "$dst/vault_ops.py"
+  # Guarded MCP writes need the standalone coordinator when the user's vault
+  # does not supply its own canonical scripts/vault_transaction.py.
+  local helper="$1/integrations/obsidian-mcp-server/vault_transaction.py"
+  [[ ! -f "$helper" ]] || cp "$helper" "$dst/vault_transaction.py"
 }
 
 # copy_references_rewritten <src-refs-dir> <dst-refs-dir> <platform_dir>

@@ -201,3 +201,13 @@ def test_python_toolkit_ships_with_its_project(built: Path, platform: str) -> No
             f"{platform} ships {scripts.relative_to(tree).as_posix()} with no "
             "pyproject.toml beside it"
         )
+        mcp_root = scripts.parent / "integrations/obsidian-mcp-server"
+        assert (mcp_root / "vault_ops.py").is_file(), (
+            f"{platform} ships scripts without the vault search engine"
+        )
+        assert (mcp_root / "vault_transaction.py").is_file(), (
+            f"{platform} ships MCP write tools without their coordinator"
+        )
+        assert (scripts / "grok_skills.py").is_file(), (
+            f"{platform} ships live skill support without the Grok renderer"
+        )
