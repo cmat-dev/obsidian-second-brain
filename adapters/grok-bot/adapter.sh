@@ -209,8 +209,9 @@ The toolkit supports note reads, guarded writes, search, backlinks, validation,
 and bounded structural health. It exposes no shell or general filesystem tool.
 A Python recipe in a playbook is not remotely executable through the toolkit;
 report the unsupported step instead of inventing a tool or another vault route.
-The support files ship for administrators and local harnesses. Hooks and the
-Claude-only calendar command remain excluded from this build.
+The support files ship for administrators and local harnesses. Grok Bot has
+no hook runtime. Hooks and the Claude-only calendar command remain excluded
+from this build.
 
 ## Verification
 

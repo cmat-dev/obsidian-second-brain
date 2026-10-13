@@ -244,7 +244,7 @@ def test_agent_skills_build_generates_spec_compliant_tree():
 def test_grok_bot_build_generates_mcp_backed_skills():
     """The grok-bot adapter must emit skills/<name>/SKILL.md per command plus
     the shared obsidian-core engine skill, designed for Grok Bot / Sand with
-    the user-obsidian-second-brain MCP server providing vault I/O."""
+    the connected MCP toolkit providing vault I/O."""
     result = subprocess.run(
         [BASH, "scripts/build.sh", "--platform", "grok-bot"],
         cwd=REPO_ROOT,
@@ -271,20 +271,21 @@ def test_grok_bot_build_generates_mcp_backed_skills():
     assert "Triggers: save this" in head
     assert "Use proactively" in head
     # MCP instructions must be present
-    assert "user-obsidian-second-brain" in save_text
+    assert "Composio" in save_text and "suffix" in save_text
+    assert "user-obsidian-second-brain" not in save_text
     assert "obsidian_search" in save_text
     assert "obsidian_save_note" in save_text
     assert "obsidian_validate_note" in save_text
     # Command body must be present, not just preamble
-    assert "Run obsidian-save" in save_text or "obsidian-save:" in save_text
+    assert "Retrieve `obsidian-save`" in save_text
     assert "Scan the entire conversation" in save_text
     assert "Group items by type" in save_text
-    assert "call obsidian_read_note" in save_text or "obsidian_read_note(" in save_text
+    assert "use `obsidian_read_note` for `_CLAUDE.md`" in save_text
     # No Claude-specific language
     assert "Execute `/obsidian-save`" not in save_text
     assert "Spawn parallel subagents" not in save_text
     # No filesystem Read/Write language (should be MCP calls)
-    assert "Read `" not in save_text[:2000] or "call obsidian_read_note" in save_text
+    assert "Read `_CLAUDE.md`" not in save_text
     assert "## AI-first vault rule (embedded)" in save_text
 
     # Non-capture commands get the explicit-only policy.
@@ -307,12 +308,13 @@ def test_grok_bot_build_generates_mcp_backed_skills():
 
     # Install docs explain the MCP + skills model.
     install_text = (REPO_ROOT / "dist/grok-bot/INSTALL.md").read_text(encoding="utf-8")
-    assert "user-obsidian-second-brain" in install_text
+    assert "Composio" in install_text
+    assert "user-obsidian-second-brain" not in install_text
     assert "MCP server" in install_text or "MCP is the I/O layer" in install_text
     # Should NOT hardcode .agents/skills/ as the install path
     assert "Grok Bot and Sand load skills from the workspace `.agents/skills/` directory" not in install_text
-    # Should explain workflows are invoked with / or @
-    assert "invoked with `/` or `@`" in install_text or "invoke by name" in install_text
+    # The supported live route fetches current playbooks through the toolkit.
+    assert "obsidian_get_skill" in install_text and "live playbooks" in install_text
     # Grok Bot has no hooks.
     assert "no hook runtime" in install_text.lower() or "no hooks" in install_text.lower()
 
