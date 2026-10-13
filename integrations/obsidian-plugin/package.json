@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && node esbuild.config.mjs production",
     "dev": "node esbuild.config.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/",
+    "test": "node --test test/lint.test.mjs",
     "pretest": "esbuild src/lint.ts --bundle --format=esm --outfile=test/.lint.mjs --log-level=warning"
   },
   "devDependencies": {
