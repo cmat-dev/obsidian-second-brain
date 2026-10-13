@@ -169,7 +169,7 @@ def test_bootstrap_writes_the_native_import(tmp_path):
     r = subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts/bootstrap_vault.py"),
          "--path", str(vault), "--name", "Test", "--preset", "default", "--no-sidebiz"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
     assert r.returncode == 0, r.stdout + r.stderr
     imported = vault / ".claude" / "CLAUDE.md"
