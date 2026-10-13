@@ -733,7 +733,7 @@ bash scripts/build.sh --platform grok-bot
 # Review dist/grok-bot/INSTALL.md for platform-specific instructions
 ```
 
-The **Grok Bot build emits workflow SKILL.md files** that Grok Bot and Sand agents invoke with `/` or `@`. Each skill is a self-contained playbook (name, description, operating instructions). The `user-obsidian-second-brain` MCP server (already connected in Grok Bot) provides the vault I/O layer via `obsidian_*` tools (`obsidian_search`, `obsidian_read_note`, `obsidian_save_note`, `obsidian_update_note`, `obsidian_validate_note`, etc.). Skills tell the agent which MCP tool to call and how to structure the data. Set `$OBSIDIAN_VAULT_PATH` to your vault root. No hooks, no scheduled agents - Grok Bot has no hook runtime.
+The **Grok Bot build emits workflow SKILL.md files** that Grok Bot and Sand agents invoke with `/` or `@`. Each skill is a self-contained playbook (name, description, operating instructions). Connect the authenticated Obsidian MCP server through Composio for vault I/O, then discover its tools by their `obsidian_*` suffix; the connected toolkit may add a prefix. Skills use the same tool contract and instruction renderer as `obsidian_get_skill`, and the live endpoint reads the deployment's configured command bank. Set `$OBSIDIAN_VAULT_PATH` on the server to your vault root. Grok Bot has no hook or shell runtime; steps needing an unavailable capability report the specific gap.
 
 ### Run on Hermes / open models
 
