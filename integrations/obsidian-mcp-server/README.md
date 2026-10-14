@@ -106,6 +106,9 @@ uv run --no-project --with 'mcp<2' python integrations/obsidian-mcp-server/serve
 
 ### Authenticated Streamable HTTP
 
+For the exercised Windows/phone/cloud topology, background process settings
+and physical-off acceptance sequence, see [the deployment profile](DEPLOYMENT.md).
+
 Stdio remains the default. For a remote client, run the server behind a TLS
 proxy such as Tailscale Funnel. HTTP mode is tested with the official Python
 SDK `mcp==1.30.0`; use `mcp>=1.30,<2` for this transport.
