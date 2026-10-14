@@ -25,6 +25,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from _bash import BASH
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DIST = REPO_ROOT / "dist"
@@ -52,7 +53,7 @@ def _tree_relative(cited: str) -> str:
 def built() -> Path:
     """Build every platform once, the way a release actually does it."""
     result = subprocess.run(
-        ["bash", "scripts/build.sh"],
+        [BASH, "scripts/build.sh"],
         cwd=REPO_ROOT,
         check=False,
         capture_output=True,
@@ -199,4 +200,17 @@ def test_python_toolkit_ships_with_its_project(built: Path, platform: str) -> No
         assert (scripts.parent / "pyproject.toml").is_file(), (
             f"{platform} ships {scripts.relative_to(tree).as_posix()} with no "
             "pyproject.toml beside it"
+        )
+        mcp_root = scripts.parent / "integrations/obsidian-mcp-server"
+        assert (mcp_root / "vault_ops.py").is_file(), (
+            f"{platform} ships scripts without the vault search engine"
+        )
+        assert (mcp_root / "vault_transaction.py").is_file(), (
+            f"{platform} ships MCP write tools without their coordinator"
+        )
+        assert (mcp_root / "raw_source.py").is_file(), (
+            f"{platform} ships source creation without its validator/hash helper"
+        )
+        assert (scripts / "grok_skills.py").is_file(), (
+            f"{platform} ships live skill support without the Grok renderer"
         )

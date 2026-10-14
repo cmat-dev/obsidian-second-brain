@@ -47,9 +47,25 @@ from pathlib import Path
 sys.path.insert(0, Path(__file__).parent.as_posix())
 
 import vault_ops  # noqa: E402
+from http_transport import (  # noqa: E402
+    disable_tools,
+    load_settings,
+    run_http,
+    security_settings,
+)
 from mcp.server.fastmcp import FastMCP  # noqa: E402
 
-mcp = FastMCP("obsidian-second-brain")
+settings = load_settings()
+if settings.transport == "streamable-http":
+    mcp = FastMCP(
+        "obsidian-second-brain",
+        host=settings.host,
+        port=settings.port,
+        streamable_http_path="/mcp",
+        transport_security=security_settings(settings),
+    )
+else:
+    mcp = FastMCP("obsidian-second-brain")
 
 
 @mcp.tool()
@@ -68,8 +84,24 @@ def obsidian_read_note(path: str, offset: int = 0, limit: int = 20_000) -> str:
 
     If `truncated` is true, call again with the returned `next_offset` until it
     is null. This avoids silently losing the newest part of large dossiers.
+    The `sha256` is the full file's read hash; pass it as `expected_sha256`
+    when updating, replacing, or moving an existing note.
     """
     return json.dumps(vault_ops.read_note(path, offset=offset, limit=limit))
+
+
+@mcp.tool()
+def obsidian_content_hash(content: str) -> str:
+    """Hash source text without writing or reading the vault.
+
+    Returns exact UTF-8 sha256, canonical_sha256, and its first16 content_hash.
+    Supply extracted article/source text after removing navigation and metadata.
+    Normalization removes a leading BOM, converts CRLF, maps line-start *|+
+    list markers to -, and collapses whitespace. Semantic extraction is supplied
+    by the caller and is not verified by this tool. Use content_hash to check
+    for an existing raw source before creating one.
+    """
+    return json.dumps(vault_ops.content_hash(content))
 
 
 @mcp.tool()
@@ -80,6 +112,8 @@ def obsidian_save_note(
     tags: list[str] | None = None,
     path: str | None = None,
     summary: str | None = None,
+    source_metadata: dict[str, str] | None = None,
+    canonical_content: str | None = None,
 ) -> str:
     """Save a new AI-first note.
 
@@ -89,6 +123,14 @@ def obsidian_save_note(
     content already begins with a legacy or generic future-agent heading, the
     server normalizes it and never duplicates it.
 
+    For a NEW raw source, use type=source, an explicit dated path under
+    raw/articles, transcripts, pdfs or videos, and source_metadata containing
+    source_url, source_type and content_hash (from obsidian_content_hash).
+    Optional metadata: capture_scope and supersedes. The raw body stays verbatim
+    without a preamble. canonical_content optionally supplies the extraction
+    used to calculate the canonical hash while content retains the raw capture.
+    The server records exact body_sha256/hash_basis and forbids metadata overrides.
+
     The result reports the write and its bookkeeping separately: `saved`,
     `validation` (ok, issues), `index` (what happened in index.md), `log` (the
     operation-log file written), and `post_write` when OBSIDIAN_POST_WRITE_CMD
@@ -96,7 +138,8 @@ def obsidian_save_note(
     """
     return json.dumps(
         vault_ops.save_note(
-            title, content, note_type=type, tags=tags, path=path, summary=summary
+            title, content, note_type=type, tags=tags, path=path, summary=summary,
+            source_metadata=source_metadata, canonical_content=canonical_content,
         )
     )
 
@@ -118,6 +161,7 @@ def obsidian_update_note(
     append: str | None = None,
     heading: str | None = None,
     set_fields: dict[str, str] | None = None,
+    expected_sha256: str | None = None,
 ) -> str:
     """Guarded edit of an EXISTING vault note (curator mode).
 
@@ -134,28 +178,39 @@ def obsidian_update_note(
     longer holds. The response echoes a `faded` field when it happens.
     """
     return json.dumps(
-        vault_ops.update_note(path, append=append, heading=heading, set_fields=set_fields)
+        vault_ops.update_note(
+            path, append=append, heading=heading, set_fields=set_fields,
+            expected_sha256=expected_sha256,
+        )
     )
 
 
 @mcp.tool()
-def obsidian_replace_text(path: str, old_text: str, new_text: str) -> str:
+def obsidian_replace_text(
+    path: str, old_text: str, new_text: str, expected_sha256: str | None = None,
+) -> str:
     """Guarded exact patch of an existing note.
 
     The old block must occur exactly once. The operation is atomic and refuses
     protected directories, path escapes, missing anchors, and ambiguous matches.
     """
-    return json.dumps(vault_ops.replace_text(path, old_text, new_text))
+    return json.dumps(vault_ops.replace_text(
+        path, old_text, new_text, expected_sha256=expected_sha256,
+    ))
 
 
 @mcp.tool()
-def obsidian_move_note(source: str, destination: str) -> str:
+def obsidian_move_note(
+    source: str, destination: str, expected_sha256: str | None = None,
+) -> str:
     """Move a markdown note inside the vault without overwriting a destination.
 
     Use to graduate Inbox captures into canonical entity/project folders. The
     result reminds callers to repair any path-qualified links to the old path.
     """
-    return json.dumps(vault_ops.move_note(source, destination))
+    return json.dumps(vault_ops.move_note(
+        source, destination, expected_sha256=expected_sha256,
+    ))
 
 
 @mcp.tool()
@@ -213,5 +268,19 @@ def obsidian_get_skill(name: str) -> str:
     return json.dumps(vault_ops.get_skill(name))
 
 
+TOOL_NAMES = frozenset(
+    name for name, value in tuple(globals().items())
+    if name.startswith("obsidian_") and callable(value)
+)
+disable_tools(mcp, settings.disabled_tools, TOOL_NAMES)
+
+
+def main() -> None:
+    if settings.transport == "stdio":
+        mcp.run()
+    else:
+        run_http(mcp, settings)
+
+
 if __name__ == "__main__":
-    mcp.run()
+    main()

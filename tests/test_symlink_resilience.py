@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -39,7 +40,12 @@ def _make_ghost_vault(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     # Ghost 1: symlink whose target (outside the vault) no longer exists.
-    (vault / "orphan-link.md").symlink_to(tmp_path / "outside" / "was-deleted.md")
+    try:
+        (vault / "orphan-link.md").symlink_to(tmp_path / "outside" / "was-deleted.md")
+    except OSError as error:
+        if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+            pytest.skip("Windows account cannot create symlink fixtures (WinError 1314)")
+        raise
     # Ghost 2: a directory whose name matches *.md.
     (vault / "notes.md").mkdir()
     return vault
