@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _bash import BASH
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -99,7 +100,7 @@ def test_installer_skips_x_commands_when_off(tmp_path):
     (home / ".claude" / "skills").mkdir(parents=True)
     env = {"HOME": str(home), "PATH": "/usr/bin:/bin", "OSB_XAI_RESEARCH": "0"}
     subprocess.run(
-        ["bash", str(REPO_ROOT / "install.sh")], input="n\n", text=True,
+        [BASH, str(REPO_ROOT / "install.sh")], input="n\n", text=True,
         env=env, cwd=REPO_ROOT, capture_output=True, timeout=120,
     )
     installed = {p.name for p in (home / ".claude" / "commands").iterdir()}
