@@ -95,6 +95,8 @@ Every successful write (`save_note`, `capture`, `update_note`, `replace_text`, `
 
 Each part has its own key so `saved` alone never implies the others happened. Writes to `Logs/`, `log.md` and `index.md` themselves are never logged (no loops). `OBSIDIAN_BOOKKEEPING=0` switches validation, index and log off; the post-write command is independent of that switch.
 
+Notes under `OBSIDIAN_LOG_EXEMPT_PREFIXES` (comma-separated folders, default `wiki/team/`, the Crew logbook) are validated and catalogued as usual but get no log line, so an agent's own activity log is not echoed into the vault log once per appended line; the report says `"log": "not logged: ..."`. Set it to an empty string to log everything. `OBSIDIAN_LOG_TZ` sets the clock for log days, `HH:MM` stamps and note dates: an IANA name (`Europe/Berlin`) or a fixed offset (`+02:00`). Unset, the server's local time is used, so a server in UTC dates late-evening entries by UTC.
+
 ## Run it
 
 Requires the vault path in the environment and the `mcp` package:

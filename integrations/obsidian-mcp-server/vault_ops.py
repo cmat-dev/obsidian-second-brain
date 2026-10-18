@@ -22,7 +22,7 @@ import sys
 import unicodedata
 import urllib.request
 from collections import OrderedDict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional
 
@@ -788,6 +788,9 @@ def _prepare_note_content(content: str, summary: Optional[str] = None) -> str:
 _BOOKKEEPING_ENV = "OBSIDIAN_BOOKKEEPING"        # "0" turns the log line, index entry and validation off
 _POST_WRITE_ENV = "OBSIDIAN_POST_WRITE_CMD"      # optional command run after every successful write
 _POST_WRITE_TIMEOUT_ENV = "OBSIDIAN_POST_WRITE_TIMEOUT"  # seconds, default 45
+_LOG_EXEMPT_ENV = "OBSIDIAN_LOG_EXEMPT_PREFIXES"  # comma-separated folders: validated, never logged
+_LOG_EXEMPT_DEFAULT = "wiki/team/"                # the Crew logbook is itself an activity log
+_LOG_TZ_ENV = "OBSIDIAN_LOG_TZ"                   # "Europe/Berlin" or "+02:00"; unset = server clock
 
 
 def _bookkeeping_enabled() -> bool:
@@ -800,10 +803,59 @@ def _is_bookkeeping_surface(rel: str) -> bool:
     return r.startswith("logs/") or r in {"log.md", "index.md"}
 
 
+def _log_exempt_prefixes() -> tuple:
+    """Folders whose writes are validated and catalogued as usual but get no log
+    line. Unlike a bookkeeping surface, these notes are still checked: the
+    exemption is only about not echoing one activity log into another.
+
+    The default is the Crew logbook folder (`wiki/team/`): an agent appending a
+    job line there would otherwise add a second, vault-wide log entry for every
+    line it records. Set the variable to an empty string to log everything, or
+    to your own comma-separated list of folders."""
+    raw = os.environ.get(_LOG_EXEMPT_ENV)
+    raw = _LOG_EXEMPT_DEFAULT if raw is None else raw
+    prefixes = []
+    for part in raw.split(","):
+        part = part.strip().replace("\\", "/").lower().strip("/")
+        if part:
+            prefixes.append(part + "/")
+    return tuple(prefixes)
+
+
+def _is_log_exempt(rel: str) -> bool:
+    r = rel.replace("\\", "/").lower().lstrip("/")
+    return any(r.startswith(p) for p in _log_exempt_prefixes())
+
+
+_FIXED_OFFSET_RE = re.compile(r"(?:UTC|GMT)?\s*([+-])(\d{1,2})(?::?(\d{2}))?", re.I)
+
+
+def _now() -> datetime:
+    """The vault's clock for log days, HH:MM stamps and note dates.
+
+    A server in UTC writing for a vault kept in another timezone put every
+    entry made between midnight and the offset on the previous day.
+    OBSIDIAN_LOG_TZ takes an IANA name (`Europe/Berlin`) or a fixed
+    offset (`+02:00`, `UTC+2`). Unset, or a name this host cannot resolve,
+    keeps the server's own local time, which is the old behaviour."""
+    spec = os.environ.get(_LOG_TZ_ENV, "").strip()
+    if not spec:
+        return datetime.now()
+    m = _FIXED_OFFSET_RE.fullmatch(spec)
+    if m:
+        delta = timedelta(hours=int(m.group(2)), minutes=int(m.group(3) or 0))
+        return datetime.now(timezone(delta if m.group(1) == "+" else -delta))
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo(spec))
+    except Exception:  # unknown name, or no tz database on this host
+        return datetime.now()
+
+
 def _append_log_line(vault: Path, action: str, description: str) -> str:
     """One operation-log line, in the vault's own convention: a per-day file when
     `Logs/` exists (as /obsidian-init creates it), else a dated section in log.md."""
-    now = datetime.now()
+    now = _now()
     day = now.strftime("%Y-%m-%d")
     logs = vault / "Logs"
     if logs.is_dir():
@@ -909,6 +961,9 @@ def _bookkeep(vault: Path, action: str, rel: str, description: str, *, summary: 
         engine = _transaction_engine(vault)
         for attempt in range(3):
             writes, report = _bookkeeping_plan(vault, action, rel, description, summary)
+            if not writes:  # a log-exempt path with no catalog entry: nothing to commit
+                out.update(report)
+                break
             logical = json.dumps(writes, sort_keys=True, ensure_ascii=False).encode('utf-8')
             request = {'operation_id': 'mcp-bookkeeping-' + hashlib.sha256(logical).hexdigest(), 'writes': writes}
             try:
@@ -982,7 +1037,7 @@ def save_note(
     if any('\n' in value or '\r' in value for value in [note_type, *tags]):
         return {"error": "type and tags must be single-line values"}
 
-    date = datetime.now().strftime("%Y-%m-%d")
+    date = _now().strftime("%Y-%m-%d")
     if path and not raw_request:
         requested = path.strip()
         target = _resolve_in_vault(vault, requested)
@@ -1033,7 +1088,7 @@ def save_note(
     action_word = 'ingested' if raw_request else action + 'd'
     committed = _commit_note(vault, rel, body, None, action,
                              f"{title[:80]} -> [[{rel[:-3]}]]{tag_note}",
-                             summary=f"`type: {note_type}`, {action_word} {datetime.now().strftime('%Y-%m-%d %H:%M')} through the MCP server. {first}",
+                             summary=f"`type: {note_type}`, {action_word} {_now().strftime('%Y-%m-%d %H:%M')} through the MCP server. {first}",
                              read_checks=read_checks)
     if "error" in committed:
         return committed
@@ -1090,7 +1145,7 @@ def update_note(
     fields = {str(k): str(v) for k, v in (set_fields or {}).items()}
     preserve_frontmatter = os.environ.get('OBSIDIAN_MCP_ALLOW_FRONTMATTER', '1') == '0'
     if not preserve_frontmatter:
-        fields.setdefault("updated", datetime.now().strftime("%Y-%m-%d"))
+        fields.setdefault("updated", _now().strftime("%Y-%m-%d"))
         if _agent_name():
             fields['agent'] = _agent_name()
     fm_lines = _apply_fields(fm_lines, fields)
@@ -1538,7 +1593,7 @@ def _bookkeeping_plan(vault: Path, action: str, rel: str, description: str, summ
     report = {}
     if not _bookkeeping_enabled() or _is_bookkeeping_surface(rel):
         return writes, report
-    now = datetime.now()
+    now = _now()
     day = now.strftime('%Y-%m-%d')
     agent = _agent_name()
     marker = f' [{agent}]' if agent else ''
@@ -1554,9 +1609,13 @@ def _bookkeeping_plan(vault: Path, action: str, rel: str, description: str, summ
         line = f"**{now.strftime('%H:%M')}** - {action}{marker} | {description}\n"
     else:
         line = f'\n## [{day}] {action}{marker} | {description}\n'
-    writes.append({'path': log_rel, 'expected_sha256': log_hash,
-                   'content': log_text + _preserve_encoding(log_text, line).lstrip('\ufeff')})
-    report['log'] = log_rel
+    if _is_log_exempt(rel):
+        # Validation still runs (it is gated on bookkeeping surfaces, not on this).
+        report['log'] = f'not logged: path is under {_LOG_EXEMPT_ENV}'
+    else:
+        writes.append({'path': log_rel, 'expected_sha256': log_hash,
+                       'content': log_text + _preserve_encoding(log_text, line).lstrip('\ufeff')})
+        report['log'] = log_rel
     if summary is None:
         return writes, report
     idx = vault / 'index.md'
