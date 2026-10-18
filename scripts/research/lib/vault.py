@@ -19,6 +19,9 @@ from urllib.parse import quote
 
 from .config import VAULT_PATH
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from note_io import NoteChangedError, read_exact, write_exact_if_unchanged  # noqa: E402
+
 # Subfolder routing per command (relative to vault root, under Research/)
 SUBFOLDERS = {
     "x-read":      Path("Research") / "X-reads",
@@ -51,6 +54,12 @@ def write_note(command: str, topic: str, frontmatter: dict[str, Any], body: str)
     folder = VAULT_PATH / SUBFOLDERS[command]
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / filename_for(command, topic)
+    # The same topic researched twice on one day used to overwrite the first
+    # note. Keep both: the second run lands beside it with a numeric suffix.
+    n = 2
+    while path.exists():
+        path = folder / f"{Path(filename_for(command, topic)).stem} ({n}).md"
+        n += 1
 
     fm_lines = ["---"]
     for k, v in frontmatter.items():
@@ -59,12 +68,21 @@ def write_note(command: str, topic: str, frontmatter: dict[str, Any], body: str)
     fm_text = "\n".join(fm_lines)
 
     full = f"{fm_text}\n\n{body.strip()}\n"
-    # UTF-8 by name, here and in the two appenders below: the platform default
-    # on Windows is the ANSI code page, where a note carrying a character the
-    # page cannot encode (a CJK word, on a Western-European system) failed to
-    # save and one it can encode was saved as bytes Obsidian reads as mojibake.
-    path.write_text(full, encoding="utf-8")
+    # UTF-8 bytes with no newline translation, here and in the two appenders
+    # below: the platform default on Windows is the ANSI code page, where a note
+    # carrying a character the page cannot encode (a CJK word, on a
+    # Western-European system) failed to save and one it can encode was saved as
+    # bytes Obsidian reads as mojibake. Create-only, and through the vault's
+    # transaction helper when it has one (see note_io).
+    write_exact_if_unchanged(path, full, None, vault_root=VAULT_PATH)
     return path
+
+
+def _match_newlines(existing: str, addition: str) -> str:
+    """Write an appended block in the file's own line-ending style."""
+    if "\r\n" in existing:
+        return addition.replace("\r\n", "\n").replace("\n", "\r\n")
+    return addition
 
 
 def _yaml_kv(key: str, value: Any) -> str:
@@ -142,10 +160,10 @@ def append_to_log(operation_summary: str) -> bool:
     does not look like a silent success.
     """
     log_path = VAULT_PATH / "log.md"
+    current = None
     if log_path.exists():
-        try:
-            log_path.read_bytes().decode("utf-8")
-        except UnicodeDecodeError:
+        current = read_exact(log_path)
+        if current is None:
             print(
                 "[vault] log.md is not UTF-8 - left untouched, nothing appended. "
                 "Re-save it as UTF-8 once (see the README FAQ) and re-run.",
@@ -154,8 +172,14 @@ def append_to_log(operation_summary: str) -> bool:
             return False
     date = datetime.now().strftime("%Y-%m-%d")
     entry = f"\n## [{date}] research-toolkit | {operation_summary}\n"
-    with log_path.open("a", encoding="utf-8") as f:
-        f.write(entry)
+    try:
+        write_exact_if_unchanged(
+            log_path, (current or "") + _match_newlines(current or "", entry), current,
+            vault_root=VAULT_PATH,
+        )
+    except NoteChangedError as exc:
+        print(f"[vault] log.md not appended: {exc}", file=sys.stderr)
+        return False
     return True
 
 
@@ -175,9 +199,8 @@ def append_to_daily(summary_md: str) -> bool:
             file=sys.stderr,
         )
         return False
-    try:
-        current = daily_path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
+    current = read_exact(daily_path)
+    if current is None:
         # Not UTF-8 (a note an earlier Windows run rewrote in its code page):
         # leave it as it is rather than rewrite it lossily, as note_io's rule says.
         print(
@@ -188,8 +211,13 @@ def append_to_daily(summary_md: str) -> bool:
         return False
     block = f"\n### Research - {datetime.now().strftime('%H:%M')}\n\n{summary_md.strip()}\n"
     if "## 🌙 Evening Review" in current:
-        new = current.replace("## 🌙 Evening Review", f"{block}\n---\n\n## 🌙 Evening Review", 1)
+        insert = _match_newlines(current, f"{block}\n---\n\n")
+        new = current.replace("## 🌙 Evening Review", f"{insert}## 🌙 Evening Review", 1)
     else:
-        new = current + block
-    daily_path.write_text(new, encoding="utf-8")
+        new = current + _match_newlines(current, block)
+    try:
+        write_exact_if_unchanged(daily_path, new, current, vault_root=VAULT_PATH)
+    except NoteChangedError as exc:
+        print(f"[vault] {daily_path.name} not appended: {exc}", file=sys.stderr)
+        return False
     return True

@@ -103,7 +103,7 @@ def apply_verdicts(vault, verdicts, create_cap):
             new_text, n = replace_outside_code(text, f"[[{link}]]", link)
             if n:
                 try:
-                    write_exact_if_unchanged(path, new_text, text)
+                    write_exact_if_unchanged(path, new_text, text, vault_root=vault)
                 except NoteChangedError:
                     # Another writer got there first (#217). Its edit is on disk
                     # and this one is not; overwriting would drop theirs with no
@@ -134,14 +134,20 @@ def apply_verdicts(vault, verdicts, create_cap):
             if not safe_stub.exists():
                 safe_stub.parent.mkdir(parents=True, exist_ok=True)
                 today = date.today().isoformat()
-                safe_stub.write_text(
+                stub_text = (
                     f"---\ntype: stub\ndate: {today}\ntags: [stub]\nai-first: true\n---\n\n"
                     f"## For future agent\n\nStub created by link triage on {today}. "
                     f"`{link}` was referenced across the vault but had no note. "
                     f"Classify it (person, project, concept, decision, etc.), fill it from "
                     f"context, set the real `type:`, and move it to the matching folder when "
-                    f"you next encounter it.\n",
-                    encoding="utf-8")
+                    f"you next encounter it.\n")
+                try:
+                    # Create-only: a stub that appeared since the check is left alone.
+                    write_exact_if_unchanged(safe_stub, stub_text, None, vault_root=vault)
+                except NoteChangedError:
+                    print(f"  SKIPPED (stub appeared or write refused): [[{link}]]")
+                    skipped += 1
+                    continue
                 created += 1
     return deleted, created, skipped
 

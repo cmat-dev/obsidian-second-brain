@@ -21,10 +21,20 @@ cron agent and a live session against one vault, plus LiveSync landing a third
 device's edits as a local file change. `write_exact_if_unchanged` closes that by
 checking, immediately before the rename, that the note still holds the bytes the
 caller read. It refuses rather than overwrites. See NoteChangedError.
+
+A vault that runs the shared transaction helper (the one the MCP server uses:
+`OBSIDIAN_TRANSACTION_HELPER`, else `<vault>/scripts/vault_transaction.py`)
+gets more than that. Pass `vault_root` and the write goes through the helper
+instead: one writer lock shared with every other participating agent, a
+SHA-256 source check made under that lock, and a recoverable journal. A vault
+without the helper is written exactly as before.
 """
+import hashlib
+import importlib.util
 import os
 import stat as stat_mod
 import tempfile
+import uuid
 from pathlib import Path
 
 
@@ -43,6 +53,52 @@ class NoteChangedError(RuntimeError):
             "Another writer (a scheduled agent, a second session, or a sync client) "
             "edited it; re-read the note and redo the change."
         )
+
+
+class TransactionRefusedError(NoteChangedError):
+    """The vault's transaction helper refused the write.
+
+    A stale source hash, a held lock, or an unresolved journal from an earlier
+    interrupted write. A NoteChangedError subclass, so batch callers already
+    skip the note and carry on; the helper's own reason is kept as __cause__.
+    Never bypass it with a direct write: an unresolved journal is waiting to
+    be inspected and recovered.
+    """
+
+    def __init__(self, path: Path, reason: BaseException):
+        RuntimeError.__init__(
+            self, f"{Path(path)} - the vault's transaction helper refused the write: {reason}"
+        )
+        self.path = Path(path)
+
+
+def transaction_helper(vault_root: Path) -> Path | None:
+    """The shared transaction helper for this vault, or None when it has none.
+
+    Same discovery as the MCP server's writes, minus its bundled fallback: a
+    vault that never deployed a helper keeps note_io's own direct writes. An
+    explicitly configured OBSIDIAN_TRANSACTION_HELPER that is missing fails
+    closed rather than silently writing around it.
+    """
+    configured = os.environ.get("OBSIDIAN_TRANSACTION_HELPER", "").strip()
+    if configured:
+        helper = Path(configured).expanduser()
+        if not helper.is_file():
+            raise FileNotFoundError(f"OBSIDIAN_TRANSACTION_HELPER not found: {helper}")
+        return helper
+    helper = Path(vault_root) / "scripts" / "vault_transaction.py"
+    return helper if helper.is_file() else None
+
+
+def _load_helper(helper: Path):
+    spec = importlib.util.spec_from_file_location("obsidian_shared_transaction", helper)
+    engine = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(engine)
+    return engine
+
+
+def _source_hash(text: str | None) -> str | None:
+    return None if text is None else hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def read_exact(path: Path) -> str | None:
@@ -96,12 +152,18 @@ def write_exact(path: Path, text: str) -> None:
         raise
 
 
-def write_exact_if_unchanged(path: Path, text: str, expected: str | None) -> None:
+def write_exact_if_unchanged(
+    path: Path, text: str, expected: str | None, *, vault_root: Path | None = None
+) -> None:
     """write_exact, but only while the note still holds the bytes it was read with.
 
     `expected` is what read_exact returned for this path, or None when the caller
     means "this note must not exist yet". If the file on disk no longer matches,
     nothing is written and NoteChangedError is raised.
+
+    With `vault_root`, a vault that runs the shared transaction helper gets the
+    write through it (see the module docstring); a refusal raises
+    TransactionRefusedError, a NoteChangedError.
 
     What this does and does not buy. It does not make the read and the write one
     operation - a writer that lands between the comparison below and the rename
@@ -116,6 +178,20 @@ def write_exact_if_unchanged(path: Path, text: str, expected: str | None) -> Non
     timestamp tick is invisible to stat on a filesystem with coarse timestamps,
     and a synced vault is exactly where those turn up.
     """
+    helper = transaction_helper(vault_root) if vault_root is not None else None
+    if helper is not None:
+        root = Path(vault_root).resolve()
+        rel = Path(path).resolve().relative_to(root).as_posix()  # ValueError if outside
+        request = {
+            "operation_id": f"note-io-{uuid.uuid4().hex}",
+            "writes": [{"path": rel, "expected_sha256": _source_hash(expected), "content": text}],
+        }
+        engine = _load_helper(helper)
+        try:
+            engine.apply(root, request)
+        except Exception as exc:  # the helper's Conflict, a held lock, a rejected path
+            raise TransactionRefusedError(path, exc) from exc
+        return
     if expected is None:
         # "must not exist yet" is checked as absence, never as a read result:
         # read_exact returns None for a file that is not valid UTF-8 too, and

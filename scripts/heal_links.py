@@ -218,7 +218,7 @@ def apply_batch(vault):
             changed += n
         if changed:
             try:
-                write_exact_if_unchanged(path, text, original)
+                write_exact_if_unchanged(path, text, original, vault_root=vault)
             except NoteChangedError:
                 # Another writer edited this note while we were working (#217).
                 # Its change is on disk and ours is not; overwriting would lose
@@ -307,7 +307,7 @@ def apply_loop(vault, max_fixes):
             skip_rels.add(rel)
             continue
         try:
-            write_exact_if_unchanged(path, text, original)
+            write_exact_if_unchanged(path, text, original, vault_root=vault)
         except NoteChangedError:
             print(f"  SKIPPED (changed on disk while healing, left untouched): {rel}")
             skip_rels.add(rel)
