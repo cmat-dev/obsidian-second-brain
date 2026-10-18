@@ -141,7 +141,9 @@ class VaultExcludes:
         {
           "exclude-dirs":  ["_card-pool", "_candidates"],  # dir names, matched as path components
           "exclude-paths": ["Archive/Backup"],             # vault-relative path prefixes (POSIX)
-          "exclude-link-scan": ["Meetings/2024-*"]         # globs: notes whose OUTGOING links are not audited
+          "exclude-link-scan": ["Meetings/2024-*"],        # globs: notes whose OUTGOING links are not audited
+          "frontmatter-exempt": ["Reviews/Generated/*"],   # globs: notes never reported for missing frontmatter
+          "orphan-exempt": ["SKILL.md", "Inbox/*"]         # globs: notes never reported as orphans
         }
 
     `exclude-link-scan` exists because some notes echo every link they mention
@@ -150,17 +152,45 @@ class VaultExcludes:
     (fork-insights round 2). Built-in defaults: `_CLAUDE.md`, `log.md`, and
     `Vault Health*` report notes. Globs match the bare filename and the
     vault-relative path.
+
+    `frontmatter-exempt` and `orphan-exempt` are for notes a vault keeps on
+    purpose that the two checks cannot know about: generated working files,
+    agent manuals, a skill folder synced into the vault. Without them the only
+    way to quiet a finding that is correct by design was to edit this file, and
+    every update put the noise back. They add to the built-in exemptions
+    (`_FRONTMATTER_EXEMPT_FILES`, `_ORPHAN_EXEMPT_FOLDERS`), never replace them,
+    and the notes stay in every other check. `*` crosses folders, so
+    `Reviews/Generated/*` covers the whole subtree.
     """
 
-    __slots__ = ("dirs", "paths", "link_scan")
+    __slots__ = ("dirs", "paths", "link_scan", "frontmatter_exempt", "orphan_exempt")
 
     #: Notes whose outgoing links are never audited (see class docstring).
     DEFAULT_LINK_SCAN_EXCLUDES = ("_CLAUDE.md", "log.md", "Vault Health*")
 
-    def __init__(self, dirs=None, paths=None, link_scan=None):
+    def __init__(self, dirs=None, paths=None, link_scan=None,
+                 frontmatter_exempt=None, orphan_exempt=None):
         self.dirs = dirs or set()
         self.paths = paths or []
         self.link_scan = list(self.DEFAULT_LINK_SCAN_EXCLUDES) + list(link_scan or [])
+        self.frontmatter_exempt = list(frontmatter_exempt or [])
+        self.orphan_exempt = list(orphan_exempt or [])
+
+    @staticmethod
+    def _glob_match(rel_posix: str, patterns) -> bool:
+        name = rel_posix.rsplit("/", 1)[-1]
+        return any(
+            fnmatch.fnmatch(name, pat) or fnmatch.fnmatch(rel_posix, pat)
+            for pat in patterns
+        )
+
+    def frontmatter_exempt_note(self, rel_posix: str) -> bool:
+        """True if the user exempted this note from the missing-frontmatter check."""
+        return self._glob_match(rel_posix, self.frontmatter_exempt)
+
+    def orphan_exempt_note(self, rel_posix: str) -> bool:
+        """True if the user exempted this note from the orphan check."""
+        return self._glob_match(rel_posix, self.orphan_exempt)
 
     def skip(self, parts, rel_posix) -> bool:
         """True if a vault path is excluded from the scan (hardcoded + user rules)."""
@@ -226,10 +256,19 @@ def load_vault_config(vault: Path) -> VaultExcludes:
     paths = []
     if isinstance(raw_paths, list):
         paths = [p.strip("/") for p in raw_paths if isinstance(p, str) and p.strip("/")]
-    link_scan = []
-    if isinstance(raw_link, list):
-        link_scan = [g for g in raw_link if isinstance(g, str) and g]
-    return VaultExcludes(dirs, paths, link_scan)
+    link_scan = _globs(raw_link)
+    return VaultExcludes(
+        dirs, paths, link_scan,
+        frontmatter_exempt=_globs(data.get("frontmatter-exempt", [])),
+        orphan_exempt=_globs(data.get("orphan-exempt", [])),
+    )
+
+
+def _globs(raw) -> list:
+    """Non-empty string globs from a config value; anything else is ignored."""
+    if not isinstance(raw, list):
+        return []
+    return [g.replace("\\", "/") for g in raw if isinstance(g, str) and g]
 
 
 REWRITE_POLICIES = ("confirm", "unattended")
@@ -636,7 +675,7 @@ def _orphan_exempt_folder(rel: str) -> bool:
     return head.replace("-", " ").replace("_", " ") in _ORPHAN_EXEMPT_FOLDERS
 
 
-def check_orphans(notes: dict) -> list:
+def check_orphans(notes: dict, excludes: "VaultExcludes" = _NO_EXCLUDES) -> list:
     # key -> set of source notes that link to it. Tracking the SOURCE matters:
     # a note's own links must not count as incoming (a self-link is the note
     # vouching for itself), and exact keys replace the old substring test that
@@ -684,6 +723,8 @@ def check_orphans(notes: dict) -> list:
             continue
         if rel in ("Home.md", "_CLAUDE.md"):
             continue
+        if excludes.orphan_exempt_note(Path(rel).as_posix()):
+            continue
         stem_lower = _nfc(note["stem"]).lower()
         stem_norm = stem_lower.replace("-", " ").replace("_", " ")
         linked = _has_incoming(
@@ -729,13 +770,15 @@ _FRONTMATTER_EXEMPT_FILES = frozenset({
 })
 
 
-def check_missing_frontmatter(notes: dict) -> list:
+def check_missing_frontmatter(notes: dict, excludes: "VaultExcludes" = _NO_EXCLUDES) -> list:
     issues = []
     skip = {"Templates", "_trash", ".obsidian"}
     for rel, note in notes.items():
         if any(s in rel for s in skip):
             continue
         if rel.rsplit("/", 1)[-1] in _FRONTMATTER_EXEMPT_FILES:
+            continue
+        if excludes.frontmatter_exempt_note(Path(rel).as_posix()):
             continue
         if note.get("code_fence_wrapped"):
             # Reported by check_code_fence_wrapped instead. The frontmatter exists but is
@@ -1389,10 +1432,10 @@ def run_health_check(vault: Path) -> dict:
     checks = [
         ("Duplicates", check_duplicates(notes)),
         ("Tag taxonomy", check_taxonomy(notes, taxonomy)),
-        ("Orphans", check_orphans(notes)),
+        ("Orphans", check_orphans(notes, excludes)),
         ("Stale tasks", check_stale_tasks(notes)),
         ("Code-fence-wrapped notes", check_code_fence_wrapped(notes)),
-        ("Missing frontmatter", check_missing_frontmatter(notes)),
+        ("Missing frontmatter", check_missing_frontmatter(notes, excludes)),
         ("Invalid tags", check_tag_syntax(notes)),
         ("Empty folders", check_empty_folders(vault, excludes)),
         ("Wanted notes", [i for i in link_gaps if i["type"] == "wanted_note"]),
