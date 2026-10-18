@@ -201,6 +201,10 @@ def main(argv: list[str]) -> int:
             summarizer = "Gemini"
         except Exception as e:  # noqa: BLE001 - fall back to Grok on any Gemini failure
             print(f"[/podcast] Gemini failed ({e}); falling back to Grok...", file=sys.stderr)
+    if result is None and not config.xai_research_enabled():
+        print("\n/podcast needs GEMINI_API_KEY to summarise: the Grok fallback is off "
+              "(OSB_XAI_RESEARCH=0).", file=sys.stderr)
+        return 1
     if result is None:
         print(f"[/podcast] Summarizing via Grok (source: {transcript_source})...\n", file=sys.stderr)
         try:

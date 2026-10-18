@@ -37,6 +37,13 @@ COMMANDS_COPIED=0
 for file in "$SKILL_DIR/commands/"*.md; do
   name=$(basename "$file")
   dest="$COMMANDS_DIR/$name"
+  # OSB_XAI_RESEARCH=0 switches xAI off; its X-only commands would only refuse.
+  case "${OSB_XAI_RESEARCH:-1}" in
+    0|false|off|no|FALSE|OFF|NO)
+      case "$name" in
+        x-read.md|x-pulse.md) echo "  skipping $name (OSB_XAI_RESEARCH is off)"; continue ;;
+      esac ;;
+  esac
   if [ -e "$dest" ] || [ -L "$dest" ]; then
     echo "  skipping $name (already exists)"
   elif [ "$IS_WINDOWS" -eq 0 ]; then

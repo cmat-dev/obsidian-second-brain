@@ -244,7 +244,7 @@ def run_free_deep(topic: str, academic: bool) -> int:
 
 
 def run_paid_deep(topic: str) -> int:
-    from .lib import grok, perplexity, vault
+    from .lib import config, grok, perplexity, vault
 
     today = datetime.now().strftime("%Y-%m-%d")
 
@@ -285,6 +285,11 @@ def run_paid_deep(topic: str) -> int:
                             sources_collected.append(url)
                     elif isinstance(c, str):
                         sources_collected.append(c)
+            elif not config.xai_research_enabled():
+                # A skipped source, not a failed one: the user switched xAI off.
+                findings_chunks.append(
+                    f"### X - {q}\n\n[SKIPPED: xAI research is off (OSB_XAI_RESEARCH=0)]")
+                print(f"  [x]   skipped, xAI research is off: {q}", file=sys.stderr)
             else:
                 print(f"  [x]   {q}", file=sys.stderr)
                 r = grok.call(

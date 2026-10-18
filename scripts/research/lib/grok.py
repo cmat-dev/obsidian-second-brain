@@ -12,7 +12,11 @@ from typing import Any
 import requests
 
 from . import usage
-from .config import GROK_MODEL, XAI_API_KEY
+from .config import GROK_MODEL, XAI_API_KEY, xai_research_enabled
+
+
+class XaiResearchDisabled(RuntimeError):
+    """xAI research is switched off with OSB_XAI_RESEARCH; no request was made."""
 
 # Strip Grok's internal tool-call protocol XML if it leaks into output text.
 # Seen patterns:
@@ -41,7 +45,15 @@ def call(
     tools example: [{"type": "x_search"}] for live X access,
                    [{"type": "web_search"}] for web,
                    or both. Grok decides when to invoke each.
+
+    Raises XaiResearchDisabled, before reading the key or touching the network,
+    when OSB_XAI_RESEARCH is off.
     """
+    if not xai_research_enabled():
+        raise XaiResearchDisabled(
+            "xAI research is off (OSB_XAI_RESEARCH=0), so no Grok request was made. "
+            "Unset it or set it to 1 to re-enable."
+        )
     model = model or GROK_MODEL
     headers = {
         "Authorization": f"Bearer {XAI_API_KEY()}",

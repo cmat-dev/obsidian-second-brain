@@ -48,6 +48,17 @@ def get_optional_int(name: str, default: int) -> int:
         ) from None
 
 
+def xai_research_enabled() -> bool:
+    """OSB_XAI_RESEARCH switches every xAI (Grok) call on or off. On by default.
+
+    `0`, `false`, `off` or `no` turns it off: grok.call refuses before any
+    network request, /research-deep skips its X queries, and /youtube and
+    /podcast summarise with Gemini only, with no Grok fallback. Read at call
+    time, so it takes effect without a restart of a long-lived process.
+    """
+    return os.environ.get("OSB_XAI_RESEARCH", "1").strip().lower() not in ("0", "false", "off", "no")
+
+
 XAI_API_KEY = lambda: get_required("XAI_API_KEY")
 PERPLEXITY_API_KEY = lambda: get_required("PERPLEXITY_API_KEY")
 GEMINI_API_KEY = lambda: get_required("GEMINI_API_KEY")
