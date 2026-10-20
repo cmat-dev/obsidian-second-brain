@@ -191,7 +191,11 @@ def append_to_daily(summary_md: str) -> bool:
     value and the research note itself has already been saved by then.
     """
     date = datetime.now().strftime("%Y-%m-%d")
-    daily_path = VAULT_PATH / "wiki" / "daily" / f"{date}.md"
+    # Both documented layouts (references/folder-map.md): wiki-style
+    # `wiki/daily/` and Obsidian-style `Daily/`. Only the first was looked at,
+    # so a `Daily/` vault never got a summary even with today's note present.
+    candidates = [VAULT_PATH / "wiki" / "daily" / f"{date}.md", VAULT_PATH / "Daily" / f"{date}.md"]
+    daily_path = next((p for p in candidates if p.exists()), candidates[0])
     if not daily_path.exists():
         print(
             f"[vault] no daily note at {daily_path.relative_to(VAULT_PATH)} - "

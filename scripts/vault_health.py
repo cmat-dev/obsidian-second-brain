@@ -868,7 +868,14 @@ def check_empty_folders(vault: Path, excludes=None) -> list:
             continue
         if not folder.is_dir():
             continue
-        if not list(folder.iterdir()):
+        try:
+            is_empty = not any(folder.iterdir())
+        except PermissionError:
+            # A folder the scan cannot list (an OS-protected or sync-locked
+            # directory) is not evidence of an empty one, and one unreadable
+            # folder must not abort the whole health report.
+            continue
+        if is_empty:
             rel = str(folder.relative_to(vault))
             issues.append({
                 "type": "empty_folder",
