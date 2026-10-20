@@ -400,6 +400,8 @@ def shell_command(parts: list[str]) -> str:
 
 def team_rules(agent: str, script: Path, folder: Path) -> str:
     base = shell_command([python_command(), str(script), "--dir", str(folder)])
+    # The example recipient is a peer, so the example never addresses the writer itself.
+    peer = "claude" if agent == "codex" else "codex"
     return (
         "## Team log\n\n"
         f"Read before each job: `{base} show --agent {agent} --new`.\n"
@@ -407,9 +409,13 @@ def team_rules(agent: str, script: Path, folder: Path) -> str:
         f"After each completed job, run `{base} add --agent {agent} "
         '--area side --did "Completed 1 job" --where "path or link"`.\n'
         "Replace the example fields with the real area, outcome, count, and evidence.\n"
-        f"Leave peer feedback with `{base} lesson --from {agent} --for codex "
+        "Then check whether the job surfaced a lesson. Leave one when you found a defect, stale "
+        "record or repeat mistake in another agent's work (kind `lesson`), or when a needed fix "
+        "is outside your scope or write access, or an open lesson addressed to you cannot be "
+        "completed (kind `gap`). Skip it when nothing qualifies; never log filler.\n"
+        f"Leave a lesson with `{base} lesson --from {agent} --for {peer} "
         '--kind lesson --text "The specific fix" --evidence "path"`.\n'
-        "Choose the actual recipient. Keep secrets out of records.\n"
+        "Choose the actual recipient (claude, codex, grokbot or all). Keep secrets out of records.\n"
         "Open lessons stay suggestions. Run keep or drop only when the human explicitly requests that decision.\n"
         "At nightly review, list open lessons for the human to keep or drop. Crew schedules no background jobs.\n"
     )
