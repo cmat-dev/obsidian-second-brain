@@ -500,7 +500,10 @@ def test_hook_command_keeps_unresolved_interpreter_path(tmp_path, monkeypatch):
     real.write_text("")
     link = tmp_path / "opt" / "python@3.14" / "bin" / "python3.14"
     link.parent.mkdir(parents=True)
-    link.symlink_to(real)
+    try:
+        link.symlink_to(real)
+    except OSError:
+        pytest.skip("symlinks unavailable on this host")
     monkeypatch.setattr(crew.sys, "executable", str(link))
     assert crew.python_command() == str(link)
     assert "3.14.6" not in crew.python_command()
